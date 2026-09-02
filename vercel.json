@@ -1,0 +1,23 @@
+{
+  "framework": "vite",
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "https://ggy.zeabur.app/api/:path*"
+    },
+    {
+      "source": "/images/:path*",
+      "destination": "https://ggy.zeabur.app/images/:path*"
+    },
+    {
+      "source": "/outputs/:path*",
+      "destination": "https://ggy.zeabur.app/outputs/:path*"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ]
+}
