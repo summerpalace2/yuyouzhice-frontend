@@ -1,6 +1,8 @@
 [build]
-  command = "npm run build"
-  publish = "dist"
+  # The production site is the current static ESM application copied from
+  # ../app. It must be served as-is so the deployed UI stays identical to
+  # the locally verified UI rather than rebuilding the retired Vue snapshot.
+  publish = "web"
 
 # Keep browser requests same-origin while the BFF remains responsible for
 # sessions, CSRF validation and Java Core orchestration.
@@ -16,7 +18,7 @@
   status = 200
   force = true
 
-# Vue history-mode routes must be resolved by the SPA after direct refresh.
+# Keep static-app deep links on the application entry point after direct refresh.
 [[redirects]]
   from = "/*"
   to = "/index.html"
