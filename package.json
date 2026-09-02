@@ -4,9 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vue-tsc -b && vite build",
-    "preview": "vite preview"
+    "dev": "vite web",
+    "build": "node --check web/app.js",
+    "preview": "vite web --host 0.0.0.0"
   },
   "dependencies": {
     "pinia": "^2.3.1",
