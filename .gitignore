@@ -1,0 +1,15 @@
+# Dependencies and deploy artifacts are reproduced by npm/Vercel.
+node_modules/
+dist/
+
+# TypeScript build cache and JavaScript emitted beside the TypeScript source.
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts
+src/**/*.js
+
+# Local-only configuration and operating-system files.
+.env
+.env.*
+!.env.example
+.DS_Store
