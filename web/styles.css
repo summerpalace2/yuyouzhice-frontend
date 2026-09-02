@@ -4114,6 +4114,88 @@ img, svg, video, canvas { max-width: 100%; }
   .chat-panel-floating .chat-selected-stop { max-width: 42%; }
   .chat-panel-floating .chat-proposal { overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
 
+  /* 规划模式与选中景点合并为一张紧凑操作卡，三种推荐改为横向 Tab，把纵向空间还给聊天记录。 */
+  .chat-panel-floating .chat-interaction-context {
+    flex: 0 0 auto;
+    margin: 8px 12px 0;
+    padding: 8px 9px;
+    border: 1px solid rgba(194, 62, 50, .16);
+    border-radius: 13px;
+    background: linear-gradient(135deg, #fffaf3, #fffdf9);
+  }
+  .chat-panel-floating .chat-context-topline {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .chat-panel-floating .chat-context-topline > span {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--muted);
+    font-size: 10px;
+    line-height: 1.3;
+    text-align: right;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .chat-panel-floating .chat-context-topline .chat-mode-select-wrap { flex: 0 0 auto; }
+  .chat-panel-floating .chat-context-topline .chat-mode-select {
+    min-height: 32px;
+    padding: 5px 25px 5px 8px;
+    color: var(--red-deep);
+    font-size: 11px;
+    font-weight: 800;
+  }
+  .chat-panel-floating .chat-interaction-context.has-compact-mode-picker .chat-mode-banner-mount { display: none; }
+  .chat-panel-floating .chat-selection-mount:empty { display: none; }
+  .chat-panel-floating .chat-selection-panel {
+    gap: 6px;
+    margin: 7px 0 0;
+    padding: 7px 0 0;
+    border: 0;
+    border-top: 1px dashed rgba(194, 62, 50, .2);
+    border-radius: 0;
+    background: transparent;
+  }
+  .chat-panel-floating .chat-selection-copy {
+    display: flex;
+    align-items: baseline;
+    min-width: 0;
+    gap: 5px;
+  }
+  .chat-panel-floating .chat-selection-copy strong { flex: 0 0 auto; font-size: 11px; }
+  .chat-panel-floating .chat-selection-copy span {
+    overflow: hidden;
+    font-size: 10px;
+    line-height: 1.25;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .chat-panel-floating .chat-selection-actions {
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 6px;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .chat-panel-floating .chat-selection-actions::-webkit-scrollbar { display: none; }
+  .chat-panel-floating .chat-selection-action,
+  .chat-panel-floating .chat-selection-clear {
+    flex: 0 0 auto;
+    width: auto;
+    min-height: 30px;
+    padding: 5px 8px;
+    font-size: 10.5px;
+    line-height: 1.2;
+    text-align: center;
+    white-space: nowrap;
+  }
+  .chat-panel-floating .chat-selection-clear { color: var(--muted); }
+  .chat-panel-floating .chat-transcript { margin-top: 8px; }
+
   /* Long knowledge titles get the flexible column; actions never collapse into vertical text. */
   .doc-item-head {
     display: grid;

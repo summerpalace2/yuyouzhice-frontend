@@ -245,6 +245,18 @@ export function chatPanel({ floating = false } = {}) {
   const inputPlaceholder = chatMode === 'planner'
     ? (state.selectedStopId ? '输入局部调整要求，例如：换成附近的室内景点…' : '描述要怎样微调当前行程，例如：少走路、多安排室内景点…')
     : hasPlanningContext ? '问问景点、天气、交通或美食，不会直接修改行程…' : '问问重庆景点、天气、交通或美食…';
+  const modePicker = canAdjust ? `
+    <div class="chat-mode-select-wrap">
+      <label for="chat-mode" class="chat-mode-label">对话用途：</label>
+      <select id="chat-mode" class="chat-mode-select">
+        <option value="chat" ${chatMode === 'chat' ? 'selected' : ''}>聊天</option>
+        <option value="planner" ${chatMode === 'planner' ? 'selected' : ''}>局部调整</option>
+      </select>
+    </div>
+  ` : '';
+  const compactContextHint = chatMode === 'planner'
+    ? '先给出预览，确认后才会改动行程'
+    : '只回答问题，不会直接改动行程';
   return `
     <aside class="panel chat-panel ${floating ? 'chat-panel-floating' : ''} ${isGuestChat ? 'chat-panel-guest' : ''}" ${floating ? 'role="dialog" aria-label="悠悠 AI 行程助手"' : 'aria-label="AI 智能旅行助理"'}>
       <div class="panel-pad">
@@ -258,23 +270,20 @@ export function chatPanel({ floating = false } = {}) {
             <span class="chat-subtitle">${hasPlanningContext ? '聊天，或对当前行程做局部调整' : '游客体验 · 只聊旅行问题'}</span>
           </div>
           <div class="chat-header-controls">
-            ${canAdjust ? `
-              <div class="chat-mode-select-wrap">
-                <label for="chat-mode" class="chat-mode-label">对话用途：</label>
-                <select id="chat-mode" class="chat-mode-select">
-                  <option value="chat" ${chatMode === 'chat' ? 'selected' : ''}>聊天</option>
-                  <option value="planner" ${chatMode === 'planner' ? 'selected' : ''}>局部调整</option>
-                </select>
-              </div>
-            ` : '<span class="guest-chat-mode-pill">游客聊天</span>'}
+            ${canAdjust && !floating ? modePicker : (!canAdjust ? '<span class="guest-chat-mode-pill">游客聊天</span>' : '')}
             ${floating ? '<button class="chat-dock-close" type="button" data-action="close-chat-dock" aria-label="收起 AI 助手">×</button>' : ''}
           </div>
         </div>
 
-        <div class="chat-mode-banner-mount">
-          ${chatModeBannerHtml()}
+        <div class="chat-interaction-context ${floating && canAdjust ? 'has-compact-mode-picker' : ''}">
+          ${floating && canAdjust ? `<div class="chat-context-topline">${modePicker}<span>${compactContextHint}</span></div>` : ''}
+          <div class="chat-mode-banner-mount">
+            ${chatModeBannerHtml()}
+          </div>
+          <div class="chat-selection-mount">
+            ${selectedStopActionHtml()}
+          </div>
         </div>
-        ${selectedStopActionHtml()}
 
         <div class="chat-transcript" role="log" aria-live="polite">
           ${state.chatMessages.length === 0 ? `
@@ -370,11 +379,14 @@ export function renderChatInDOM({ scrollToBottom = true } = {}, renderViewCallba
   }
 
   // 景点选择是聊天框内的即时上下文，不需要重刷整页；切换模式或多选站点时同步更新。
-  const oldSelectionPanel = panel.querySelector('.chat-selection-panel');
-  oldSelectionPanel?.remove();
-  if (bannerMount) {
+  const selectionMount = panel.querySelector('.chat-selection-mount');
+  if (selectionMount) {
+    selectionMount.innerHTML = selectedStopActionHtml();
+  } else {
+    // 兼容热更新中仍保留旧布局的浮窗，不影响当前对话继续进行。
+    panel.querySelector('.chat-selection-panel')?.remove();
     const selectionHtml = selectedStopActionHtml();
-    if (selectionHtml) bannerMount.insertAdjacentHTML('afterend', selectionHtml);
+    if (bannerMount && selectionHtml) bannerMount.insertAdjacentHTML('afterend', selectionHtml);
   }
 
   // 2. 更新聊天消息记录区 (transcript)
