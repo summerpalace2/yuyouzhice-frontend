@@ -170,6 +170,15 @@ export async function deleteTrip(id, { renderModals, updateTripsInDOM, loadTrips
 export async function exportTripPdf(id) {
   if (!state.user) return toast('请先登录后导出行程。');
   try {
+    const endpoint = `/api/trips/${encodeURIComponent(id)}/pdf`;
+    // iOS Safari、微信等移动 WebView 对 Blob + download 支持不一致，常会无提示地
+    // 忽略下载。服务端已经返回 RFC 5987 文件名，因此移动端直接交给系统 PDF 查看器
+    // / 下载器处理，桌面端仍保留可控的 Blob 下载体验。
+    if (/(Android|iPhone|iPad|iPod|Mobile)/i.test(navigator.userAgent || '')) {
+      window.location.assign(endpoint);
+      toast('正在打开 PDF，可在系统预览页保存或分享。');
+      return;
+    }
     const response = await fetch(`/api/trips/${encodeURIComponent(id)}/pdf`, {
       credentials: 'same-origin',
       headers: {

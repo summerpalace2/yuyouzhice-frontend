@@ -3934,3 +3934,131 @@ img, svg, video, canvas { max-width: 100%; }
   .memory-candidate-item { align-items: stretch; flex-direction: column; }
   .memory-candidate-item > div:last-child { justify-content: flex-end; }
 }
+
+/* Mobile interaction contract: one gesture owns one scroll container. */
+@media (max-width: 640px) {
+  body.chat-dock-open {
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+
+  /* Header actions previously shrank into vertical single-character buttons. */
+  .topbar:not(.guest-topbar) {
+    align-items: flex-start;
+  }
+  .topbar .brand {
+    width: 100%;
+    min-width: 0;
+  }
+  .brand-mark {
+    width: 34px;
+    height: 34px;
+    border-radius: 9px;
+    font-size: 17px;
+  }
+  .brand-name { font-size: 15px; }
+  .brand-note { font-size: 11px; }
+  .admin-role-badge { flex: 0 0 auto; font-size: 10px; padding: 2px 6px; }
+  .nav {
+    width: 100%;
+    min-width: 0;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .nav::-webkit-scrollbar { display: none; }
+  .nav > button {
+    flex: 0 0 auto;
+    min-width: max-content;
+    white-space: nowrap;
+  }
+  .nav .perspective-btn {
+    width: auto !important;
+    min-height: 34px;
+    padding: 6px 10px !important;
+  }
+  .nav .user-button { padding: 6px 8px !important; }
+  .nav .user-button > span:last-child { display: none; }
+
+  /* The AI assistant becomes a full-width bottom sheet instead of a narrow card. */
+  .chat-dock {
+    inset: auto 0 0;
+    right: 0;
+    bottom: 0;
+  }
+  .chat-dock-panel {
+    width: 100vw;
+    height: min(86dvh, 760px);
+    min-height: min(480px, 86dvh);
+    animation-name: chatDockMobileIn;
+  }
+  .chat-panel-floating {
+    border-right: 0;
+    border-bottom: 0;
+    border-left: 0;
+    border-radius: 22px 22px 0 0;
+    box-shadow: 0 -16px 42px rgba(48, 28, 22, .2);
+    backdrop-filter: none;
+  }
+  .chat-panel-floating .chat-header-row { padding: 13px 16px 10px; }
+  .chat-panel-floating .chat-mode-banner-mount { padding: 0 12px; }
+  .chat-panel-floating .chat-transcript {
+    margin: 10px 12px 0;
+    padding: 12px;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-y;
+  }
+  .chat-panel-floating .chat-input-row {
+    flex-direction: row;
+    align-items: flex-end;
+    gap: 8px;
+    margin: 9px 12px calc(12px + env(safe-area-inset-bottom));
+  }
+  .chat-panel-floating .chat-input-row textarea {
+    min-width: 0;
+    max-height: 120px;
+  }
+  .chat-panel-floating .chat-input-row button {
+    flex: 0 0 auto;
+    min-width: 68px;
+    width: auto;
+  }
+  .chat-panel-floating .chat-selected-stop { max-width: 42%; }
+  .chat-panel-floating .chat-proposal { overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+
+  /* Long knowledge titles get the flexible column; actions never collapse into vertical text. */
+  .doc-item-head {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+    gap: 10px;
+    padding: 13px;
+  }
+  .doc-title-group { min-width: 0; align-items: flex-start; }
+  .doc-title-group strong, .doc-title-group span { overflow-wrap: anywhere; }
+  .doc-head-actions { flex: 0 0 auto; gap: 7px; }
+  .doc-head-actions .mini-btn {
+    min-width: 72px;
+    min-height: 38px;
+    padding: 7px 9px;
+    white-space: nowrap;
+  }
+  .expand-icon { min-width: 42px; white-space: nowrap; text-align: center; }
+
+  /* Admin rows and avatar/metrics retain deliberate proportions at CSS viewport width. */
+  .admin-user-row { padding: 12px; }
+  .user-main-info { align-items: flex-start; }
+  .user-avatar-circle { width: 36px; height: 36px; font-size: 14px; }
+  .user-metrics-chips { gap: 6px; }
+  .user-mini-stat { min-width: 0; padding: 6px 7px; }
+  .admin-control-link { grid-template-columns: 34px minmax(0, 1fr) auto; min-height: 64px; }
+  .admin-control-link > span { width: 34px; height: 34px; }
+}
+
+@keyframes chatDockMobileIn {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}

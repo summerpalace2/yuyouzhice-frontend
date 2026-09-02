@@ -69,7 +69,7 @@ export async function renderTripMap() {
       <div class="map-fallback">
         <div class="map-fallback-title">高德路线与空间拓扑就绪</div>
         <p class="map-fallback-desc">${points.length ? `当前已解析 ${points.length} 个站点地理坐标与 ${routes.length} 条连接路线` : '高德 POI 坐标正在查询或回退中'}</p>
-        <div class="map-fallback-note">路线数据模式下已完整绑定站点地理信息，配置前端 AMAP_JS_KEY 即可开启底图交互漫游。</div>
+        <div class="map-fallback-note">路线数据模式下已完整绑定站点地理信息。请在 BFF 的 Zeabur 环境变量配置 <code>AMAP_WEB_JS_KEY</code>（启用安全密钥时再配置 <code>AMAP_WEB_JS_SECURITY_CODE</code>），并在高德控制台放行当前站点域名，即可开启交互底图。</div>
       </div>`;
     mapRenderedTrip = trip;
     mapRenderedDay = dayFilter;
