@@ -1,0 +1,23 @@
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+# Keep browser requests same-origin while the BFF remains responsible for
+# sessions, CSRF validation and Java Core orchestration.
+[[redirects]]
+  from = "/api/*"
+  to = "https://ggy.zeabur.app/api/:splat"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/images/*"
+  to = "https://ggy.zeabur.app/images/:splat"
+  status = 200
+  force = true
+
+# Vue history-mode routes must be resolved by the SPA after direct refresh.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

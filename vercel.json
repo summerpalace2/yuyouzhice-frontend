@@ -12,10 +12,6 @@
       "destination": "https://ggy.zeabur.app/images/:path*"
     },
     {
-      "source": "/outputs/:path*",
-      "destination": "https://ggy.zeabur.app/outputs/:path*"
-    },
-    {
       "source": "/(.*)",
       "destination": "/index.html"
     }

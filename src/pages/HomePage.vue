@@ -12,6 +12,13 @@
 
       <div class="hero-visual">
         <div class="visual-tag">精选 24 大重庆核心地标</div>
+        <div class="route-sketch" aria-hidden="true">
+          <span class="route-line route-line-one"></span>
+          <span class="route-line route-line-two"></span>
+          <span class="route-pin pin-one">渝中</span>
+          <span class="route-pin pin-two">江北</span>
+          <span class="route-pin pin-three">南岸</span>
+        </div>
         <div class="visual-caption">
           <strong>立体山城 · 两江交汇</strong>
           <span>解放碑 · 洪崖洞 · 三峡博物馆 · 李子坝 · 鹅岭二厂 · 磁器口</span>
@@ -92,9 +99,12 @@ h1 em {
 .hero-visual {
   min-height: 480px;
   border-radius: var(--radius-lg);
-  background: url('/outputs/home.png'), url('/outputs/attraction-hero.png'), var(--surface-tint);
-  background-size: cover;
-  background-position: center;
+  position: relative;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 77% 19%, rgba(255, 255, 255, 0.92) 0 12%, transparent 13%),
+    linear-gradient(130deg, rgba(255, 255, 255, 0.88), rgba(255, 227, 203, 0.76)),
+    var(--surface-tint);
   border: 1px solid var(--border);
   box-shadow: var(--shadow);
   padding: 24px;
@@ -103,7 +113,56 @@ h1 em {
   justify-content: space-between;
 }
 
+.hero-visual::before {
+  content: '';
+  position: absolute;
+  inset: 52px 28px 80px;
+  border: 1px solid rgba(197, 60, 45, 0.13);
+  border-radius: 28px;
+  background-image:
+    linear-gradient(rgba(197, 60, 45, 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(197, 60, 45, 0.06) 1px, transparent 1px);
+  background-size: 34px 34px;
+}
+
+.route-sketch {
+  position: absolute;
+  inset: 76px 50px 112px;
+  z-index: 1;
+}
+
+.route-line {
+  position: absolute;
+  height: 3px;
+  background: linear-gradient(90deg, transparent, rgba(192, 63, 45, 0.82), transparent);
+  transform-origin: left center;
+  box-shadow: 0 5px 12px rgba(168, 61, 41, 0.18);
+}
+
+.route-line-one { width: 68%; top: 50%; left: 4%; transform: rotate(-23deg); }
+.route-line-two { width: 56%; top: 39%; left: 41%; transform: rotate(61deg); }
+
+.route-pin {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  border: 7px solid rgba(255, 255, 255, 0.72);
+  border-radius: 50%;
+  color: white;
+  font-size: 12px;
+  font-weight: 800;
+  box-shadow: 0 8px 18px rgba(95, 47, 36, 0.2);
+}
+
+.pin-one { top: 35%; left: 7%; background: #c9503b; }
+.pin-two { top: 7%; left: 45%; background: #e28247; }
+.pin-three { right: 5%; bottom: 0; background: #917083; }
+
 .visual-tag {
+  position: relative;
+  z-index: 2;
   background: rgba(28, 25, 23, 0.72);
   color: white;
   padding: 4px 10px;
@@ -115,6 +174,8 @@ h1 em {
 }
 
 .visual-caption {
+  position: relative;
+  z-index: 2;
   background: rgba(251, 249, 245, 0.92);
   padding: 14px 18px;
   border-radius: var(--radius);
