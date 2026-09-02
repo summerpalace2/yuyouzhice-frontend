@@ -70,6 +70,8 @@ export function preferenceModal() {
 export function renderModals() {
   const mount = document.getElementById('modal-mount');
   if (!mount) return;
+  // 全屏地图不属于页面滚动流；开启期间只让地图接收手势，关闭时立刻恢复页面滚动。
+  document.body.classList.toggle('map-fullscreen-open', Boolean(state.mapFullscreen && state.trip));
   mount.innerHTML = `
     ${loginModal()}
     ${replanModal()}

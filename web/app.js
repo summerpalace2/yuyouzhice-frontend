@@ -82,11 +82,13 @@ import {
 export {
   renderTripMap,
   renderFullscreenMap,
+  destroyFullscreenMap,
   destroyTripMap
 } from './src/widgets/trip-map/map-renderer.js';
 import {
   renderTripMap,
   renderFullscreenMap,
+  destroyFullscreenMap,
   destroyTripMap
 } from './src/widgets/trip-map/map-renderer.js';
 
@@ -896,11 +898,7 @@ if (app) {
     }
     if (action === 'close-fullscreen-map') {
       state.mapFullscreen = false;
-      if (state.fullscreenMapInstance) {
-        clearFullscreenMapOverlays(state.fullscreenMapInstance);
-        try { state.fullscreenMapInstance.destroy(); } catch {}
-        state.fullscreenMapInstance = null;
-      }
+      destroyFullscreenMap();
       renderModals();
     }
     if (action === 'navigate-to') {

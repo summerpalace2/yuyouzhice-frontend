@@ -1447,28 +1447,54 @@ h1 em { color: var(--red); font-style: normal; }
   animation: fadeIn 0.2s ease-out;
 }
 .fullscreen-map-header {
-  height: 64px;
+  min-height: 64px;
   padding: 0 24px;
   display: flex;
-  justify-content: space-between;
   align-items: center;
+  gap: 18px;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
 }
+.fullscreen-map-title-row { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .fullscreen-header-left {
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 12px;
 }
 .fullscreen-map-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 16px;
   font-weight: 800;
   font-family: serif;
 }
+.fullscreen-map-tabs-rail { flex: 0 1 auto; min-width: 0; }
+.fullscreen-map-tabs-rail .map-day-tabs { scrollbar-width: none; }
+.fullscreen-map-tabs-rail .map-day-tabs::-webkit-scrollbar { display: none; }
+.fullscreen-map-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 34px;
+  padding: 6px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--ink-secondary);
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.fullscreen-map-close > span { font-size: 19px; line-height: .8; font-weight: 400; }
+.fullscreen-map-close:hover { color: var(--red); border-color: var(--red-border); background: var(--red-subtle); }
 .fullscreen-map-canvas {
-  flex: 1;
+  flex: 1 1 0;
+  min-height: 0;
   width: 100%;
-  height: calc(100vh - 64px);
+  height: auto;
   background: #f4eee3;
 }
 
@@ -3937,6 +3963,65 @@ img, svg, video, canvas { max-width: 100%; }
 
 /* Mobile interaction contract: one gesture owns one scroll container. */
 @media (max-width: 640px) {
+  body.map-fullscreen-open {
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+
+  /* 全屏地图不再沿用桌面 64px 顶栏：标题、日期和关闭键分层，避开刘海与浏览器动态地址栏。 */
+  .fullscreen-map-overlay {
+    height: 100dvh;
+    min-height: 100svh;
+    overflow: hidden;
+    background: #f4eee3;
+  }
+  .fullscreen-map-header {
+    flex: 0 0 auto;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 9px;
+    min-height: 0;
+    padding: calc(10px + env(safe-area-inset-top)) 12px 10px;
+    background: rgba(255, 253, 249, .97);
+    box-shadow: 0 3px 15px rgba(78, 55, 36, .1);
+    z-index: 2;
+  }
+  .fullscreen-map-title-row { gap: 9px; }
+  .fullscreen-header-left { gap: 7px; }
+  .fullscreen-map-title {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    white-space: normal;
+    font-family: inherit;
+    font-size: 14px;
+    line-height: 1.28;
+  }
+  .fullscreen-header-left .intel-badge { flex: 0 0 auto; padding: 3px 5px; font-size: 10px; }
+  .fullscreen-map-close { flex: 0 0 auto; min-width: 40px; min-height: 40px; padding: 7px 9px; border-radius: 12px; }
+  .fullscreen-map-close b { display: none; }
+  .fullscreen-map-close > span { font-size: 24px; }
+  .fullscreen-map-tabs-rail { width: 100%; overflow: hidden; }
+  .fullscreen-map-tabs-rail .map-day-tabs {
+    width: max-content;
+    max-width: 100%;
+    gap: 7px;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+    padding: 1px 1px 3px;
+  }
+  .fullscreen-map-tabs-rail .map-tab { flex: 0 0 auto; min-height: 34px; padding: 6px 11px; font-size: 12px; }
+  .fullscreen-map-canvas {
+    min-height: 0;
+    height: auto;
+    touch-action: none;
+  }
+  .fullscreen-map-canvas .amap-container,
+  .fullscreen-map-canvas .amap-maps,
+  .fullscreen-map-canvas .amap-layers { touch-action: none; }
+
   body.chat-dock-open {
     overflow: hidden;
     overscroll-behavior: none;

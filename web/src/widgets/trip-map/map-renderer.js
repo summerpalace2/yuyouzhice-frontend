@@ -12,8 +12,50 @@ import {
 
 let mapRenderTimer = null;
 let fullscreenMapRenderTimer = null;
+let fullscreenViewportResizeTimer = null;
+let releaseFullscreenViewportListeners = null;
 let mapRenderedTrip = null;
 let mapRenderedDay = null;
+
+function syncFullscreenMapSize() {
+  if (!state.mapFullscreen || !state.fullscreenMapInstance) return;
+  if (fullscreenViewportResizeTimer) window.clearTimeout(fullscreenViewportResizeTimer);
+  fullscreenViewportResizeTimer = window.setTimeout(() => {
+    fullscreenViewportResizeTimer = null;
+    try { state.fullscreenMapInstance?.resize(); } catch {}
+  }, 50);
+}
+
+function bindFullscreenViewportListeners() {
+  if (releaseFullscreenViewportListeners) return;
+  const viewport = window.visualViewport;
+  window.addEventListener('resize', syncFullscreenMapSize, { passive: true });
+  viewport?.addEventListener('resize', syncFullscreenMapSize, { passive: true });
+  viewport?.addEventListener('scroll', syncFullscreenMapSize, { passive: true });
+  releaseFullscreenViewportListeners = () => {
+    window.removeEventListener('resize', syncFullscreenMapSize);
+    viewport?.removeEventListener('resize', syncFullscreenMapSize);
+    viewport?.removeEventListener('scroll', syncFullscreenMapSize);
+    releaseFullscreenViewportListeners = null;
+  };
+}
+
+export function destroyFullscreenMap() {
+  if (fullscreenMapRenderTimer) {
+    window.clearTimeout(fullscreenMapRenderTimer);
+    fullscreenMapRenderTimer = null;
+  }
+  if (fullscreenViewportResizeTimer) {
+    window.clearTimeout(fullscreenViewportResizeTimer);
+    fullscreenViewportResizeTimer = null;
+  }
+  releaseFullscreenViewportListeners?.();
+  if (state.fullscreenMapInstance) {
+    clearFullscreenMapOverlays(state.fullscreenMapInstance);
+    try { state.fullscreenMapInstance.destroy(); } catch {}
+    state.fullscreenMapInstance = null;
+  }
+}
 
 function reportMapRenderError(error, container) {
   console.warn('地图暂时不可用，保留行程内容供继续查看。', error);
@@ -193,6 +235,13 @@ export async function renderTripMap() {
 export async function renderFullscreenMap() {
   const container = document.querySelector('#fullscreen-trip-map');
   if (!container || !state.trip || !state.mapFullscreen) return;
+  if ((container.clientWidth === 0 || container.clientHeight === 0) && container.isConnected) {
+    window.setTimeout(() => renderFullscreenMap().catch(() => {}), 50);
+    return;
+  }
+  const mountedContainer = state.fullscreenMapInstance?.getContainer?.();
+  // 弹窗层重绘会替换地图容器。旧实例继续绑定旧容器时，手机上会出现空白或尺寸错乱。
+  if (mountedContainer && mountedContainer !== container) destroyFullscreenMap();
   const trip = state.trip;
   const dayFilter = Number(state.selectedMapDay || 0);
 
@@ -220,6 +269,7 @@ export async function renderFullscreenMap() {
         center: points[0]?.coordinates || [106.577, 29.557],
         resizeEnable: true
       });
+      bindFullscreenViewportListeners();
     }
 
     clearFullscreenMapOverlays(state.fullscreenMapInstance);
@@ -318,10 +368,7 @@ export function destroyTripMap() {
     state.mapInstance.destroy();
     state.mapInstance = null;
   }
-  if (state.fullscreenMapInstance) {
-    try { state.fullscreenMapInstance.destroy(); } catch {}
-    state.fullscreenMapInstance = null;
-  }
+  destroyFullscreenMap();
   mapRenderedTrip = null;
   mapRenderedDay = null;
 }
