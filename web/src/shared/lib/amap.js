@@ -54,30 +54,68 @@ export function loadAmapSdk() {
   return window.__yuyouzhiceAmapPromise;
 }
 
+function parseCoordinates(value) {
+  if (Array.isArray(value) && value.length === 2 && value.every((item) => Number.isFinite(Number(item)))) {
+    return [Number(value[0]), Number(value[1])];
+  }
+  if (typeof value === 'string') {
+    const parts = value.split(',').map(Number);
+    if (parts.length === 2 && parts.every(Number.isFinite)) return [parts[0], parts[1]];
+  }
+  return null;
+}
+
 /**
- * 提取行程中指定天数的有效经纬度打点
+ * 提取行程中指定天数的有效经纬度打点（包含规划起点与动态POI坐标）
  */
 export function mapPoints(trip, dayFilter = 0) {
   if (!trip?.days) return [];
   const days = dayFilter > 0 ? trip.days.filter((d) => d.day === dayFilter) : trip.days;
-  return days.flatMap((day) =>
-    (day.stops || []).map((stop, idx) => ({
-      stop,
-      day: day.day,
-      dayIndex: idx + 1,
-      color: DAY_COLORS[(day.day - 1) % DAY_COLORS.length],
-      coordinates: stop.mapContext?.coordinates
-    }))
-  ).filter((item) => Array.isArray(item.coordinates) && item.coordinates.length === 2 && item.coordinates.every(Number.isFinite));
+  const stopPoints = days.flatMap((day) =>
+    (day.stops || []).map((stop, idx) => {
+      const coordinates = stop.mapContext?.coordinates
+        || (stop.mapContext?.coordinate ? parseCoordinates(stop.mapContext.coordinate) : null)
+        || parseCoordinates(stop.mapContext?.location || stop.location);
+      return coordinates ? {
+        stop,
+        label: stop.name,
+        day: day.day,
+        dayIndex: idx + 1,
+        color: DAY_COLORS[(day.day - 1) % DAY_COLORS.length],
+        coordinates,
+        isStart: false
+      } : null;
+    })
+  ).filter(Boolean);
+
+  const startCoordStr = trip.planContext?.startLocation || trip.spatialPlan?.resolvedStartCoordinate;
+  const startLocation = parseCoordinates(startCoordStr);
+  if (!startLocation || (dayFilter > 1 && dayFilter !== 0)) return stopPoints;
+
+  const startLabel = trip.planContext?.startPlace || trip.planContext?.startingArea || trip.spatialPlan?.startAnchorName || '规划起点';
+  return [{
+    label: startLabel,
+    day: 0,
+    dayIndex: 0,
+    color: '#1f2937',
+    coordinates: startLocation,
+    isStart: true
+  }, ...stopPoints];
 }
 
 /**
- * 解析路线经纬度数组
+ * 解析路线经纬度数组（支持分号分隔与数组格式）
  */
 export function mapPath(polyline = []) {
-  return polyline
-    .map((value) => String(value).split(',').map(Number))
-    .filter((point) => point.length === 2 && point.every(Number.isFinite));
+  if (typeof polyline === 'string') {
+    return polyline
+      .split(';')
+      .map((pt) => pt.split(',').map(Number))
+      .filter((point) => point.length === 2 && point.every(Number.isFinite));
+  }
+  return (polyline || [])
+    .map((value) => (typeof value === 'string' ? value.split(',').map(Number) : value))
+    .filter((point) => Array.isArray(point) && point.length === 2 && point.every(Number.isFinite));
 }
 
 /**
@@ -111,7 +149,7 @@ export function clearFullscreenMapOverlays(targetMapInstance = state.fullscreenM
 /**
  * 唤起官方高德导航/路线规划（不暴露服务端 Key，优先唤起 App，支持 Web Fallback）
  */
-export function navigateTo(name, location = '') {
+export function navigateTo(name, location = '', fromName = '', fromLocation = '') {
   const targetName = encodeURIComponent(String(name || '目的地'));
   let coords = String(location || '').trim();
   let lng = '';
@@ -122,9 +160,19 @@ export function navigateTo(name, location = '') {
     lat = parts[1].trim();
   }
 
+  let fromParam = '';
+  const cleanFromName = String(fromName || '').trim();
+  const cleanFromLocation = String(fromLocation || '').trim();
+  if (cleanFromLocation.includes(',')) {
+    const parts = cleanFromLocation.split(',');
+    fromParam = `&from=${parts[0].trim()},${parts[1].trim()},${encodeURIComponent(cleanFromName || '起点')}`;
+  } else if (cleanFromName && cleanFromName !== '当前位置' && cleanFromName !== '未提供') {
+    fromParam = `&from=${encodeURIComponent(cleanFromName)}`;
+  }
+
   // 高德官方统一 URI API：支持在移动端唤起高德 App，桌面端无缝展示官方路线页
   const webNavUrl = coords
-    ? `https://uri.amap.com/navigation?to=${lng},${lat},${targetName}&mode=walk&policy=1&src=yuyouzhice&coordinate=gaode&callnative=1`
+    ? `https://uri.amap.com/navigation?to=${lng},${lat},${targetName}${fromParam}&mode=walk&policy=1&src=yuyouzhice&coordinate=gaode&callnative=1`
     : `https://uri.amap.com/search?keyword=${targetName}&city=重庆&src=yuyouzhice&coordinate=gaode&callnative=1`;
 
   window.open(webNavUrl, '_blank', 'noopener,noreferrer');

@@ -16,6 +16,7 @@ let fullscreenViewportResizeTimer = null;
 let releaseFullscreenViewportListeners = null;
 let mapRenderedTrip = null;
 let mapRenderedDay = null;
+let mapRenderedTripVersion = null;
 
 function syncFullscreenMapSize() {
   if (!state.mapFullscreen || !state.fullscreenMapInstance) return;
@@ -76,8 +77,9 @@ export async function renderTripMap() {
     return;
   }
 
+  const tripVersion = trip.version ?? trip.updatedAt ?? (trip.days || []).map((d) => (d.stops || []).map((s) => s.id).join(',')).join(';');
   const isMapContainerConnected = Boolean(state.mapInstance && state.mapInstance.getContainer && document.contains(state.mapInstance.getContainer()));
-  if (mapRenderedTrip === trip && mapRenderedDay === dayFilter && state.mapInstance && isMapContainerConnected && !state.locating) {
+  if (mapRenderedTrip === trip && mapRenderedTripVersion === tripVersion && mapRenderedDay === dayFilter && state.mapInstance && isMapContainerConnected && !state.locating) {
     return;
   }
 
@@ -90,10 +92,13 @@ export async function renderTripMap() {
   const points = mapPoints(trip, dayFilter);
   const targetDays = dayFilter > 0 ? trip.days.filter((d) => d.day === dayFilter) : trip.days;
   const routes = targetDays.flatMap((day) =>
-    (day.stops || []).map((stop) => ({
-      polyline: mapPath(stop.mapContext?.polyline || []),
-      color: DAY_COLORS[(day.day - 1) % DAY_COLORS.length]
-    }))
+    (day.stops || []).map((stop) => {
+      const rawPolyline = stop.routeFromPrevious?.polyline || stop.walkingInfo?.polyline || stop.mapContext?.polyline;
+      return {
+        polyline: mapPath(rawPolyline || []),
+        color: DAY_COLORS[(day.day - 1) % DAY_COLORS.length]
+      };
+    })
   ).filter((r) => r.polyline.length > 1);
 
   let config;
@@ -130,6 +135,8 @@ export async function renderTripMap() {
         center,
         resizeEnable: true
       });
+    } else if (points.length > 0) {
+      state.mapInstance.setCenter(points[0].coordinates);
     }
 
     clearMapOverlays(state.mapInstance);
@@ -165,31 +172,40 @@ export async function renderTripMap() {
       overlays.push(userMarker);
     }
 
-    points.forEach(({ stop, day, dayIndex, color, coordinates }) => {
+    points.forEach(({ stop, day, dayIndex, color, coordinates, isStart, label }) => {
+      const displayName = isStart ? (label || '规划起点') : (stop?.name || label || '景点');
+      const pinLabel = isStart ? '起点' : `D${day}-${dayIndex}`;
+      const markerTitle = isStart ? `规划起点 · ${displayName}` : `第${day}天 · ${displayName}`;
       const content = `
-        <div class="map-marker-pin" style="background:${color};">
-          D${day}-${dayIndex} ${escapeHtml(stop.name)}
+        <div class="map-marker-pin ${isStart ? 'map-marker-start' : ''}" style="background:${color};">
+          ${pinLabel} ${escapeHtml(displayName)}
         </div>
       `;
       const marker = new AMap.Marker({
         position: coordinates,
-        title: `第${day}天 · ${stop.name}`,
+        title: markerTitle,
         content,
         anchor: 'bottom-center'
       });
 
       marker.on('click', () => {
-        const infoHtml = `
+        const infoHtml = isStart ? `
           <div class="map-info-popup">
-            <div class="info-popup-meta">第 ${day} 天 · 第 ${dayIndex} 站 · ${escapeHtml(stop.district)}</div>
-            <div class="info-popup-title">${escapeHtml(stop.name)}</div>
-            <p class="info-popup-desc">${escapeHtml(stop.summary)}</p>
+            <div class="info-popup-meta">本次限定位置规划起点</div>
+            <div class="info-popup-title">${escapeHtml(displayName)}</div>
+            <p class="info-popup-desc">高德路线从此处开始计算。</p>
+          </div>
+        ` : `
+          <div class="map-info-popup">
+            <div class="info-popup-meta">第 ${day} 天 · 第 ${dayIndex} 站 · ${escapeHtml(stop?.district || '')}</div>
+            <div class="info-popup-title">${escapeHtml(displayName)}</div>
+            <p class="info-popup-desc">${escapeHtml(stop?.summary || '')}</p>
             <div class="info-popup-chips">
-              <span class="info-chip duration">建议 ${escapeHtml(stop.duration)}</span>
-              <span class="info-chip transit">${escapeHtml(stop.walk)}</span>
+              <span class="info-chip duration">建议 ${escapeHtml(stop?.duration || '约90分钟')}</span>
+              <span class="info-chip transit">${escapeHtml(stop?.walk || '路线就绪')}</span>
             </div>
             <div class="info-popup-actions" style="margin-top:8px;">
-              <button class="primary mini-btn" data-action="navigate-to" data-name="${escapeHtml(stop.name)}" data-location="${coordinates.join(',')}">高德导航 · 到这去</button>
+              <button class="primary mini-btn" data-action="navigate-to" data-name="${escapeHtml(displayName)}" data-location="${coordinates.join(',')}">高德导航 · 到这去</button>
             </div>
           </div>
         `;
@@ -217,6 +233,8 @@ export async function renderTripMap() {
     state.mapOverlays = overlays;
     if (overlays.length) {
       state.mapInstance.setFitView(overlays, false, [36, 36, 36, 36]);
+    } else if (points.length > 0) {
+      state.mapInstance.setCenter(points[0].coordinates);
     }
     state.mapInstance.resize();
     window.requestAnimationFrame(() => {
@@ -225,10 +243,12 @@ export async function renderTripMap() {
 
     mapRenderedTrip = trip;
     mapRenderedDay = dayFilter;
+    mapRenderedTripVersion = tripVersion;
   } catch (error) {
     reportMapRenderError(error, container);
     mapRenderedTrip = trip;
     mapRenderedDay = dayFilter;
+    mapRenderedTripVersion = tripVersion;
   }
 }
 
@@ -248,10 +268,13 @@ export async function renderFullscreenMap() {
   const points = mapPoints(trip, dayFilter);
   const targetDays = dayFilter > 0 ? trip.days.filter((d) => d.day === dayFilter) : trip.days;
   const routes = targetDays.flatMap((day) =>
-    (day.stops || []).map((stop) => ({
-      polyline: mapPath(stop.mapContext?.polyline || []),
-      color: DAY_COLORS[(day.day - 1) % DAY_COLORS.length]
-    }))
+    (day.stops || []).map((stop) => {
+      const rawPolyline = stop.routeFromPrevious?.polyline || stop.walkingInfo?.polyline || stop.mapContext?.polyline;
+      return {
+        polyline: mapPath(rawPolyline || []),
+        color: DAY_COLORS[(day.day - 1) % DAY_COLORS.length]
+      };
+    })
   ).filter((r) => r.polyline.length > 1);
 
   const config = await loadMapConfig();
@@ -270,6 +293,8 @@ export async function renderFullscreenMap() {
         resizeEnable: true
       });
       bindFullscreenViewportListeners();
+    } else if (points.length > 0) {
+      state.fullscreenMapInstance.setCenter(points[0].coordinates);
     }
 
     clearFullscreenMapOverlays(state.fullscreenMapInstance);
@@ -293,33 +318,43 @@ export async function renderFullscreenMap() {
       overlays.push(userMarker);
     }
 
-    points.forEach(({ stop, day, dayIndex, color, coordinates }) => {
+    points.forEach(({ stop, day, dayIndex, color, coordinates, isStart, label }) => {
+      const displayName = isStart ? (label || '规划起点') : (stop?.name || label || '景点');
+      const pinLabel = isStart ? '起点' : `D${day}-${dayIndex}`;
+      const markerTitle = isStart ? `规划起点 · ${displayName}` : `第${day}天 · ${displayName}`;
       const content = `
-        <div class="map-marker-pin" style="background:${color};">
-          D${day}-${dayIndex} ${escapeHtml(stop.name)}
+        <div class="map-marker-pin ${isStart ? 'map-marker-start' : ''}" style="background:${color};">
+          ${pinLabel} ${escapeHtml(displayName)}
         </div>
       `;
       const marker = new AMap.Marker({
         position: coordinates,
-        title: `第${day}天 · ${stop.name}`,
+        title: markerTitle,
         content,
         anchor: 'bottom-center'
       });
       marker.on('click', () => {
-        infoWindow.setContent(`
+        const infoHtml = isStart ? `
           <div class="map-info-popup">
-            <div class="info-popup-meta">第 ${day} 天 · 第 ${dayIndex} 站 · ${escapeHtml(stop.district)}</div>
-            <div class="info-popup-title">${escapeHtml(stop.name)}</div>
-            <p class="info-popup-desc">${escapeHtml(stop.summary)}</p>
+            <div class="info-popup-meta">本次限定位置规划起点</div>
+            <div class="info-popup-title">${escapeHtml(displayName)}</div>
+            <p class="info-popup-desc">高德路线从此处开始计算。</p>
+          </div>
+        ` : `
+          <div class="map-info-popup">
+            <div class="info-popup-meta">第 ${day} 天 · 第 ${dayIndex} 站 · ${escapeHtml(stop?.district || '')}</div>
+            <div class="info-popup-title">${escapeHtml(displayName)}</div>
+            <p class="info-popup-desc">${escapeHtml(stop?.summary || '')}</p>
             <div class="info-popup-chips">
-              <span class="info-chip duration">游玩 ${escapeHtml(stop.duration)}</span>
-              <span class="info-chip transit">${escapeHtml(stop.walk)}</span>
+              <span class="info-chip duration">游玩 ${escapeHtml(stop?.duration || '约90分钟')}</span>
+              <span class="info-chip transit">${escapeHtml(stop?.walk || '路线就绪')}</span>
             </div>
             <div class="info-popup-actions" style="margin-top:8px;">
-              <button class="primary mini-btn" data-action="navigate-to" data-name="${escapeHtml(stop.name)}" data-location="${coordinates.join(',')}">高德导航 · 到这去</button>
+              <button class="primary mini-btn" data-action="navigate-to" data-name="${escapeHtml(displayName)}" data-location="${coordinates.join(',')}">高德导航 · 到这去</button>
             </div>
           </div>
-        `);
+        `;
+        infoWindow.setContent(infoHtml);
         infoWindow.open(state.fullscreenMapInstance, coordinates);
       });
       marker.setMap(state.fullscreenMapInstance);
@@ -343,6 +378,8 @@ export async function renderFullscreenMap() {
 
     if (overlays.length) {
       state.fullscreenMapInstance.setFitView(overlays, false, [60, 60, 60, 60]);
+    } else if (points.length > 0) {
+      state.fullscreenMapInstance.setCenter(points[0].coordinates);
     }
     state.fullscreenMapInstance.resize();
   } catch (err) {
@@ -371,4 +408,5 @@ export function destroyTripMap() {
   destroyFullscreenMap();
   mapRenderedTrip = null;
   mapRenderedDay = null;
+  mapRenderedTripVersion = null;
 }

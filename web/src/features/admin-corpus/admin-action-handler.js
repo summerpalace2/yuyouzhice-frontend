@@ -68,11 +68,25 @@ export async function handleAdminAction({
   renderModals,
   renderView,
   updateAdminDocListInDOM,
+  updateAdminAttractionListInDOM,
+  updateAdminUserListInDOM,
   clearRerankCache,
   loadRerankStats,
+  loadIntentShadowStats,
+  probeIntentCapability,
   refreshRerankPanelInDOM,
   loadAdminHealth
 } = {}) {
+  if (action === 'admin-attraction-filter') {
+    state.adminAttractionCategory = target.dataset.category || '';
+    if (typeof updateAdminAttractionListInDOM === 'function') updateAdminAttractionListInDOM();
+    return true;
+  }
+  if (action === 'admin-user-role-filter') {
+    state.adminUserRoleFilter = target.dataset.role || '';
+    if (typeof updateAdminUserListInDOM === 'function') updateAdminUserListInDOM();
+    return true;
+  }
   if (action === 'admin-doc-topic') {
     state.adminDocTopic = target.dataset.topic || '';
     updateAdminDocListInDOM();
@@ -180,6 +194,26 @@ export async function handleAdminAction({
       }
     };
     renderModals();
+    return true;
+  }
+  if (action === 'probe-admin-intent-capability') {
+    const button = target;
+    button.disabled = true;
+    const previousText = button.textContent;
+    button.textContent = '探测中…';
+    try {
+      const result = await probeIntentCapability();
+      await loadIntentShadowStats();
+      const status = String(result?.status || 'UNKNOWN');
+      const message = String(result?.message || '协议探测已完成。');
+      toast(`${status}：${message}`);
+      renderView();
+    } catch (error) {
+      toast(error.message || '协议探测失败。');
+    } finally {
+      button.disabled = false;
+      button.textContent = previousText;
+    }
     return true;
   }
   if (action === 'reset-user-data') {

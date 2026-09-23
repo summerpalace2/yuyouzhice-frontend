@@ -138,6 +138,27 @@ export const useChatStore = defineStore('chat', () => {
           ui.showToast(`行程调整已应用！当前为第 ${convRes.currentVersion || convRes.trip.version} 版`);
           return;
         }
+
+        const isUnknownIntent = convRes.type === 'UNKNOWN' || convRes.operation === 'UNKNOWN';
+        if (!isUnknownIntent && convRes.requiresClarification && convRes.clarificationQuestion) {
+          assistantMsg.content = convRes.clarificationQuestion;
+          assistantMsg.pending = false;
+          loading.value = false;
+          return;
+        }
+
+        const answer = String(convRes.answer || convRes.message || '').trim();
+        const isGenericFallback = !answer
+          || answer.includes('关于重庆旅游景点，您可以随时在行程中点击卡片提问')
+          || answer.includes('暂时没有从高德核验到该景点的详情')
+          || answer.includes('高德暂时没有找到');
+        if (!isUnknownIntent && !isGenericFallback) {
+          assistantMsg.content = answer;
+          assistantMsg.pending = false;
+          loading.value = false;
+          return;
+        }
+
       } catch (err: any) {
         if (err.status === 409) {
           ui.showToast('行程版本已在其他操作中更新，正在重新加载...');
@@ -177,7 +198,7 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  async function applyProposal() {
+  async function applyProposal(force = false) {
     if (!activeProposal.value || !tripStore.sessionId) return;
     const baseRevision = Number(activeProposal.value.baseRevision || tripStore.trip?.version || 1);
     loading.value = true;
@@ -189,6 +210,7 @@ export const useChatStore = defineStore('chat', () => {
           proposalId: activeProposal.value.proposalId,
           optionId: selectedOptionId.value || 'option-1',
           baseRevision,
+          forceApply: Boolean(force),
           sessionAccessToken: tripStore.sessionAccessToken || '',
           idempotencyKey: plannerIdempotencyKey('planner-apply')
         })

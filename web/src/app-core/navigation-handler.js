@@ -4,7 +4,7 @@
  * 此处刻意不处理聊天、规划和管理员数据写入；调用方根据 true/false 决定
  * 是否继续将动作交给对应领域 handler。依赖通过参数传入，避免本模块反向依赖 feature。
  */
-export async function handleNavigationAction({
+export function handleNavigationAction({
   action,
   target,
   state,
@@ -15,6 +15,7 @@ export async function handleNavigationAction({
   loadUserPlan,
   loadUserChats,
   getTripChatKey,
+  startGuestChatSession,
   loadExplore,
   loadTrips,
   loadHistory,
@@ -26,6 +27,24 @@ export async function handleNavigationAction({
   switchAdminSectionInDOM,
   toast
 } = {}) {
+  const loadAdminOverviewInBackground = () => {
+    state.adminLoading = true;
+    state.adminLoadError = '';
+    void loadAdminHealth({ renderAfterLoad: false })
+      .catch((error) => {
+        state.adminLoadError = error?.message || '无法读取管理概览。';
+        console.warn('管理数据加载失败。', error);
+      })
+      .finally(() => {
+        state.adminLoading = false;
+        if (state.view === 'admin') {
+          renderHeader();
+          renderView();
+          renderFloatingBtn();
+        }
+      });
+  };
+
   if (action === 'go') {
     const requestedView = target.dataset.view;
     const protectedViews = ['home', 'planning', 'explore', 'trips', 'history', 'profile', 'admin'];
@@ -40,7 +59,7 @@ export async function handleNavigationAction({
       return true;
     }
 
-    // 管理页先挂载明确的加载态，再等待真实概览；不能让用户停在上一页，
+    // 管理页先挂载明确的加载态，再后台读取真实概览；不能让用户停在上一页，
     // 也不能在接口失败时渲染由空对象推导出的 0 值指标。
     if (requestedView === 'admin') {
       if (state.user?.role !== 'admin') {
@@ -60,18 +79,25 @@ export async function handleNavigationAction({
       renderHeader();
       renderView();
       renderFloatingBtn();
-      try {
-        await loadAdminHealth({ renderAfterLoad: false });
-      } catch (error) {
-        state.adminLoadError = error?.message || '无法读取管理概览。';
-        console.warn('管理数据加载失败。', error);
-      } finally {
-        state.adminLoading = false;
-        renderHeader();
-        renderView();
-        renderFloatingBtn();
-      }
+      loadAdminOverviewInBackground();
       return true;
+    }
+
+    if (!state.user && requestedView === 'guest-chat' && state.view !== 'guest-chat') {
+      state.chatSessionId = startGuestChatSession();
+      state.chatMessages = [];
+      state.chatInput = '';
+      state.chatMeta = null;
+      state.chatRoute = 'idle';
+      state.chatMode = 'chat';
+      state.trip = null;
+      state.sessionId = null;
+      state.savedTripId = null;
+      state.itineraryMemorySnapshot = null;
+      state.activeProposal = null;
+      state.selectedStopId = null;
+      if (state.selectedStopIds instanceof Set) state.selectedStopIds.clear();
+      if (state.pinnedStopIds instanceof Set) state.pinnedStopIds.clear();
     }
 
     state.view = requestedView;
@@ -95,10 +121,10 @@ export async function handleNavigationAction({
     renderHeader();
     renderView();
     renderFloatingBtn();
-    if (state.view === 'explore') await loadExplore();
-    if (state.view === 'trips') await loadTrips(renderView);
-    if (state.view === 'history') await loadHistory(renderView);
-    if (state.view === 'profile') await loadProfile(refreshProfileInDOM);
+    if (state.view === 'explore') void loadExplore();
+    if (state.view === 'trips') void loadTrips(renderView);
+    if (state.view === 'history') void loadHistory(renderView);
+    if (state.view === 'profile') void loadProfile(refreshProfileInDOM);
     if (state.view === 'planning' && state.trip) scheduleTripMap();
     if (state.view === 'planning' && state.trip) scheduleDynamicRefresh();
     return true;
@@ -111,15 +137,10 @@ export async function handleNavigationAction({
     }
     const section = target.dataset.section || 'overview';
     if (state.view === 'admin' && switchAdminSectionInDOM(section)) return true;
-    if (!(state.adminOverview && isPageDataFresh('admin', { maxAgeMs: 30_000 }))) {
-      try {
-        await loadAdminHealth({ renderAfterLoad: false });
-      } catch (error) {
-        console.warn('管理数据加载失败。', error);
-      }
-    }
     state.view = 'admin';
     state.adminSection = section;
+    const adminDataFresh = state.adminOverview && isPageDataFresh('admin', { maxAgeMs: 30_000 });
+    if (!adminDataFresh) loadAdminOverviewInBackground();
     renderHeader();
     renderView();
     renderFloatingBtn();

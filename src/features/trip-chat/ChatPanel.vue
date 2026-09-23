@@ -18,7 +18,7 @@
 
       <!-- 模式状态横幅 -->
       <div v-if="bannerInfo" class="mode-badge-banner" :class="bannerInfo.class">
-        <div><strong>{{ bannerInfo.title }}</strong> <span v-if="bannerInfo.tag" class="proposal-id-tag">{{ bannerInfo.tag }}</span></div>
+        <div><strong>{{ bannerInfo.title }}</strong></div>
         <span class="sub-tip">{{ bannerInfo.tip }}</span>
       </div>
 
@@ -83,7 +83,6 @@
         <div class="chat-proposal-head">
           <div>
             <strong>{{ chatStore.activeProposal.feasible !== false ? '📋 待确认的行程调整方案' : '⚠️ 调整方案存在硬约束冲突（不可行）' }}</strong>
-            <span class="proposal-id-tag">ID: {{ chatStore.activeProposal.proposalId }}</span>
           </div>
           <span class="chip" :class="chatStore.activeProposal.feasible !== false ? 'chip-success' : 'chip-danger'">
             {{ chatStore.activeProposal.feasible !== false ? '局部微调方案' : '不可直接应用' }}
@@ -99,7 +98,10 @@
               v-for="(cand, idx) in chatStore.activeProposal.candidateReplacements"
               :key="cand.optionId || idx"
               class="candidate-option-card"
-              :class="{ selected: chatStore.selectedOptionId === (cand.optionId || `option-${idx + 1}`) }"
+              :class="{
+                selected: chatStore.selectedOptionId === (cand.optionId || `option-${idx + 1}`),
+                'candidate-option-dining': cand.isDining || cand.type === 'DINING' || Boolean(cand.specialtyDish)
+              }"
               @click="chatStore.selectedOptionId = cand.optionId || `option-${idx + 1}`"
             >
               <div class="option-card-head">
@@ -110,7 +112,16 @@
                   :checked="chatStore.selectedOptionId === (cand.optionId || `option-${idx + 1}`)"
                 />
                 <strong>方案 {{ idx + 1 }}：{{ cand.name }}</strong>
-                <span class="chip">{{ cand.district || '渝中区' }} · 步行{{ cand.walkDifficulty || '低' }}</span>
+                <span v-if="cand.isDining || cand.type === 'DINING' || cand.specialtyDish" class="chip chip-dining-tag">
+                  {{ cand.district || '周边地道' }} · {{ cand.averageCost || cand.costSummary || '特色美食' }}
+                </span>
+                <span v-else class="chip">
+                  {{ cand.district || '渝中区' }} · 步行{{ cand.walkDifficulty || '低' }}
+                </span>
+              </div>
+              <div v-if="cand.specialtyDish" class="candidate-dish-row">
+                <span class="candidate-dish-badge">🥘 招牌必吃</span>
+                <span class="candidate-dish-text">{{ cand.specialtyDish }}</span>
               </div>
               <p class="option-summary">{{ cand.summary }}</p>
             </label>
@@ -127,8 +138,17 @@
           >
             确认应用方案并生成新版
           </button>
+          <button
+            v-else
+            class="primary mini-btn"
+            type="button"
+            :disabled="chatStore.loading"
+            @click="chatStore.applyProposal(true)"
+          >
+            仍按此调整方案应用
+          </button>
           <button class="ghost mini-btn" type="button" @click="chatStore.dismissProposal()">
-            暂不修改
+            取消本次调整
           </button>
         </div>
       </div>
@@ -204,16 +224,29 @@ const bannerInfo = computed(() => {
     return {
       class: isFeasible ? 'mode-proposal-banner' : 'mode-conflict-banner',
       title: isFeasible ? '📋 待确认的行程调整方案' : '⚠️ 调整方案存在硬约束冲突',
-      tag: `ID: ${chatStore.activeProposal.proposalId || ''}`,
       tip: isFeasible ? '请在下方核对方案并确认应用，生成新版本' : '请查看替代建议或选择其他景点'
     };
   }
   if (tripStore.selectedStopId) {
     const stop = tripStore.trip?.days?.flatMap((d) => d.stops || []).find((s) => s.id === tripStore.selectedStopId);
+    const isDining = stop && (
+      stop.type === 'DINING'
+      || stop.isDining
+      || stop.icon === '餐'
+      || Boolean(stop.specialtyDish)
+      || Boolean(stop.id && stop.id.includes('dining'))
+      || Boolean(stop.name && (stop.name.includes('餐推荐') || stop.name.includes('【午餐】') || stop.name.includes('【晚餐】')))
+    );
+    if (isDining) {
+      return {
+        class: 'mode-dining-banner',
+        title: `🍽️ 餐饮换店模式：【${stop?.name || '选中美食'}】`,
+        tip: '点击下方推荐口味，或向 AI 描述想吃的老火锅、江湖菜与辣度偏好'
+      };
+    }
     return {
       class: 'mode-replace-banner',
       title: `🎯 景点替换模式：【${stop?.name || '选中站点'}】`,
-      tag: '',
       tip: '点击快捷指令或直接输入“换个同片区景点”即可生成备选'
     };
   }
@@ -224,13 +257,35 @@ const suggestionInfo = computed(() => {
   if (tripStore.selectedStopId) {
     const stop = tripStore.trip?.days?.flatMap((d) => d.stops || []).find((s) => s.id === tripStore.selectedStopId);
     const name = stop?.name || '当前站点';
+    const isDining = stop && (
+      stop.type === 'DINING'
+      || stop.isDining
+      || stop.icon === '餐'
+      || Boolean(stop.specialtyDish)
+      || Boolean(stop.id && stop.id.includes('dining'))
+      || Boolean(stop.name && (stop.name.includes('餐推荐') || stop.name.includes('【午餐】') || stop.name.includes('【晚餐】')))
+    );
+    if (isDining) {
+      return {
+        class: 'suggestion-dining',
+        title: `🍲 已选中【${name}】`,
+        desc: '您可以让 AI 为您更换同片区老火锅、特色江湖菜、特色小吃，或调整清淡不辣偏好。',
+        buttons: [
+          { label: '🥘 换特色江湖菜', prompt: `请把【${name}】替换为附近地道重庆江湖菜或老字号中餐` },
+          { label: '🍲 换地道老火锅', prompt: `请把【${name}】替换为周边口碑好的重庆老火锅` },
+          { label: '🍜 换名小吃小面', prompt: `请把【${name}】替换为周边特色小吃、抄手或重庆小面` },
+          { label: '🥗 换清淡不辣', prompt: `请把【${name}】替换为清淡不辣的养生汤锅或名小吃` }
+        ]
+      };
+    }
     return {
       class: 'suggestion-replace',
       title: `🎯 已选中【${name}】`,
       desc: '您可以要求 AI 替换此景点、缩短停留时间或更改前后路线。',
       buttons: [
         { label: '🔄 换同片区景点', prompt: `把【${name}】替换为同片区其他景点` },
-        { label: '🏛️ 换室内景点', prompt: `把【${name}】换成室内景点` }
+        { label: '🏛️ 换室内景点', prompt: `把【${name}】换成室内景点` },
+        { label: '🚶 少走路景点', prompt: `把【${name}】换成下车即达、少爬坡低步行的景点` }
       ]
     };
   }
@@ -389,16 +444,27 @@ const suggestionInfo = computed(() => {
   gap: 8px;
 }
 .candidate-option-card {
-  padding: 10px 12px;
-  border: 1px solid var(--border);
+  padding: 12px 14px;
+  border: 1.5px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--surface);
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all 0.2s ease;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+.candidate-option-card:hover {
+  border-color: #cbd5e1;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
 }
 .candidate-option-card.selected {
   border-color: var(--blue);
   background: #eff6ff;
+  box-shadow: 0 4px 14px rgba(37, 99, 235, 0.12);
+}
+.candidate-option-card.candidate-option-dining.selected {
+  border-color: #ea580c;
+  background: #fff7ed;
+  box-shadow: 0 4px 14px rgba(234, 88, 12, 0.14);
 }
 
 .chat-proposal-actions {
@@ -465,5 +531,54 @@ const suggestionInfo = computed(() => {
 .suggestion-actions {
   display: flex;
   gap: 6px;
+  flex-wrap: wrap;
+}
+
+.mode-dining-banner {
+  background: #fff7ed;
+  border: 1px solid #fed7aa;
+  color: #9a3412;
+}
+
+.suggestion-dining {
+  background: #fffaf5;
+  border: 1px solid #fed7aa;
+}
+
+.candidate-option-dining {
+  border-left: 3.5px solid #ea580c;
+}
+.candidate-option-dining.selected {
+  border-color: #ea580c;
+  background: #fff7ed;
+}
+
+.chip-dining-tag {
+  background: #ffedd5 !important;
+  color: #9a3412 !important;
+  border-color: #fed7aa !important;
+  font-weight: 600;
+}
+
+.candidate-dish-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0 6px;
+  background: #fff7ed;
+  border-radius: 4px;
+  padding: 3px 6px;
+}
+
+.candidate-dish-badge {
+  font-size: 10.5px;
+  font-weight: 700;
+  color: #c2410c;
+}
+
+.candidate-dish-text {
+  font-size: 11.5px;
+  color: #7c2d12;
+  font-weight: 600;
 }
 </style>

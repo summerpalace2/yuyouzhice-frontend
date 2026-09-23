@@ -12,6 +12,7 @@ export async function bootstrapApplication({
   render,
   scheduleDynamicRefresh,
   loadAdminHealth,
+  prefetchPlannerContext,
   state
 } = {}) {
   renderAppShell(app);
@@ -22,6 +23,8 @@ export async function bootstrapApplication({
   }
 
   await restoreAuthSession();
+  // 首屏只等待会话恢复；规划上下文在后台预取，避免用户点击规划时再串行等待。
+  if (state?.user && prefetchPlannerContext) void prefetchPlannerContext();
   // 管理员直接回到控制中心时，先准备数据再首次挂载，避免先显示空指标、
   // 随后异步请求完成又整页替换一次所造成的闪烁。
   if (state?.user?.role === 'admin' && state.view === 'admin') {

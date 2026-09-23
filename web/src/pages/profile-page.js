@@ -22,14 +22,64 @@ function memoryCategoryLabel(category) {
   return memoryCategoryLabels[String(category || 'CUSTOM').toUpperCase()] || '自定义记忆';
 }
 
-function profileStatsHtml({ trips, memories, history }) {
+const PRESET_DINING_TAGS = ['老火锅', '烧烤', '江湖菜', '特色小吃', '甜品糖水', '老茶馆', '微辣', '清淡少辣'];
+const PRESET_ATTRACTION_TAGS = ['山城夜景', '室内场馆', '魔幻8D', '人文历史', '自然山水', '文创街区', '少爬坡少走路', '江景索道'];
+
+function profileStatsHtml({ trips, memories, history, memoryEnabled = false }) {
   return `
     <div class="profile-stats-grid">
       <div class="profile-stat-card"><div class="stat-name">已存方案</div><div class="stat-val">${trips.length}</div><div class="stat-sub">份持久化行程</div></div>
-      <div class="profile-stat-card"><div class="stat-name">旅行记忆</div><div class="stat-val" data-profile-memory-count>${memories.length}</div><div class="stat-sub">条已确认记忆</div></div>
+      <div class="profile-stat-card"><div class="stat-name">前置提示词</div><div class="stat-val" data-profile-prompt-status>${memoryEnabled ? '已启用' : '未开启'}</div><div class="stat-sub">注入AI规划与对话</div></div>
+      <div class="profile-stat-card"><div class="stat-name">近期记忆</div><div class="stat-val" data-profile-memory-count>${memories.length}</div><div class="stat-sub">条7天滚动沉淀</div></div>
       <div class="profile-stat-card"><div class="stat-name">变更记录</div><div class="stat-val">${history.length}</div><div class="stat-sub">次偏好调整流水</div></div>
-      <div class="profile-stat-card"><div class="stat-name">评价反馈</div><div class="stat-val">${state.profile.feedback?.length || 0}</div><div class="stat-sub">条互动记录</div></div>
     </div>
+  `;
+}
+
+function prependPromptPanelHtml() {
+  const memoryEnabled = state.profile?.memoryEnabled === true;
+  const rawPrompt = state.profile?.profilePrependPrompt || '';
+  const promptText = rawPrompt.trim()
+    ? rawPrompt
+    : '【用户专属旅行偏好画像】暂无特殊偏好，按常规经典游玩。';
+
+  return `
+    <section class="panel panel-pad prepend-prompt-panel">
+      <div class="prepend-prompt-head">
+        <div>
+          <span class="memory-kicker">AI PREPEND PLANNING PROMPT</span>
+          <div class="panel-title">AI 规划前置提示词</div>
+        </div>
+        <span class="prepend-prompt-status-badge ${memoryEnabled ? 'is-active' : ''}">
+          ${memoryEnabled ? '● 规划注入已启用' : '○ 规划注入已暂停'}
+        </span>
+      </div>
+      <p class="muted" style="font-size:13px;margin:6px 0 14px;line-height:1.55;">
+        由右侧近期旅行记忆智能萃取整合。开启后，该画像<b>直接作为后续 AI 行程规划与对话引擎的高优系统前置提示词（Prepend Context）</b>。支持自由修改；右侧新增记忆时会自动增量微调同步，并持久保留你的专属定制内容。
+      </p>
+
+      <div class="prepend-prompt-editor-card">
+        <div class="prepend-prompt-editor-top">
+          <div class="editor-label-row">
+            <span class="editor-icon">✨</span>
+            <strong>旅行偏好画像（AI 规划直接输入）</strong>
+          </div>
+          <span class="prepend-prompt-counter"><span id="prepend-prompt-count">${promptText.length}</span> 字</span>
+        </div>
+
+        <textarea id="prepend-prompt-editor" class="prepend-prompt-textarea" rows="6" placeholder="点击编辑专属旅行前置提示词，例如：【用户专属旅行偏好画像】偏好老火锅与老茶馆；喜欢山城夜景；节奏从容，少爬坡少走台阶…">${escapeHtml(promptText)}</textarea>
+
+        <div class="prepend-prompt-footer">
+          <div class="prepend-prompt-tip-text">
+            <span>💡 提示：手动修改后点击保存；右侧新增记忆时会自动增量融合并覆盖旧冲突，且不会冲掉你手动添加的备注。</span>
+          </div>
+          <div class="prepend-prompt-btn-group">
+            <button type="button" class="ghost mini-btn" data-action="resynthesize-prepend-prompt" title="丢弃当前定制，基于右侧全部近期记忆重新提炼">🔄 重新提炼</button>
+            <button type="button" class="primary mini-btn" data-action="save-prepend-prompt">💾 保存提示词修改</button>
+          </div>
+        </div>
+      </div>
+    </section>
   `;
 }
 
@@ -37,30 +87,69 @@ function memoryProfilePanelHtml() {
   const memories = state.profile?.memories || [];
   const memoryCandidates = state.profile?.memoryCandidates || [];
   const memoryEnabled = state.profile?.memoryEnabled === true;
-  const lastReviewLabel = state.profile?.memoryLastReviewAt
-    ? new Date(state.profile.memoryLastReviewAt).toLocaleString('zh-CN')
-    : '尚未进行自动整理';
+  const isExpanded = state.memoriesExpanded === true;
+  const visibleMemories = isExpanded ? memories : memories.slice(0, 3);
+  const hiddenCount = memories.length - visibleMemories.length;
+
   return `
     <section class="panel panel-pad memory-profile-panel">
       <div class="memory-profile-head">
-        <div><span class="memory-kicker">LONG-TERM MEMORY</span><div class="panel-title">我的旅行记忆</div></div>
+        <div>
+          <span class="memory-kicker">LONG-TERM MEMORY (7-DAY STREAM)</span>
+          <div class="panel-title">我的近期旅行记忆 (7天滚动流)</div>
+        </div>
         <button class="memory-switch ${memoryEnabled ? 'is-on' : ''}" data-action="toggle-travel-memory" aria-pressed="${memoryEnabled}" aria-label="${memoryEnabled ? '关闭长期旅行记忆' : '开启长期旅行记忆'}"><i></i>${memoryEnabled ? '已启用' : '未启用'}</button>
       </div>
-      <p class="muted memory-profile-copy">${memoryEnabled ? '新建 AI 规划与普通聊天会召回下面已确认的记忆；本次明确输入始终优先。' : '它不是自动替你做决定的“偏好标签”。开启后，悠悠只会把稳定的旅行表达整理成候选，仍由你确认是否记住。'}</p>
+      <p class="muted memory-profile-copy">${memoryEnabled ? '💡 记忆记录保留 7 天作为溯源证据，期满自动归档淘汰；左侧整合生成的前置提示词永久有效且持续注入 AI 规划。' : '开启后，悠悠会将你的旅行表达提炼为记忆，并在左侧实时合成前置规划提示词。'}</p>
       ${memoryEnabled ? '' : '<div class="memory-enable-cta"><div><strong>让悠悠逐渐了解你的旅行习惯</strong><span>只记录你确认的内容；可随时编辑、删除或关闭。</span></div><button class="primary memory-enable-btn" data-action="enable-travel-memory">开启长期记忆</button></div>'}
-      <div class="memory-review-status"><span>自动整理：后台每小时检查一次；同一账号至少间隔 12 小时</span><time>最近整理：${escapeHtml(lastReviewLabel)}</time></div>
-      <div class="memory-priority-line"><span>本次明确输入</span><b>›</b><span>已确认长期记忆</span><b>›</b><span>对话候选（需确认）</span></div>
-      ${memoryCandidates.length ? `<div class="memory-candidate-list"><strong>待你确认的记忆建议</strong>${memoryCandidates.map((candidate) => `<article class="memory-candidate-item"><div><span>${escapeHtml(memoryCategoryLabel(candidate.category))}</span><b>${escapeHtml(candidate.content)}</b><small>由后台定时整理生成，确认后才会用于未来规划。</small></div><div><button class="ghost mini-btn" data-action="dismiss-profile-memory-candidate" data-id="${escapeHtml(candidate.id)}">忽略</button><button class="primary mini-btn" data-action="confirm-profile-memory-candidate" data-id="${escapeHtml(candidate.id)}">确认记住</button></div></article>`).join('')}</div>` : ''}
-      <div class="travel-memory-list">
-        ${memories.length ? memories.map((memory) => `
-          <article class="travel-memory-item" data-travel-memory-id="${escapeHtml(memory.id)}">
-            <div><span class="travel-memory-category">${escapeHtml(memoryCategoryLabel(memory.category))}</span><strong>${escapeHtml(memory.content)}</strong><small>${escapeHtml(memory.sourceType === 'USER_EDIT' ? '你手动添加' : '由对话识别，经你确认')} · 更新于 ${new Date(memory.updatedAt).toLocaleDateString('zh-CN')}</small></div>
-            <div class="travel-memory-actions"><button class="ghost mini-btn" data-action="edit-travel-memory" data-id="${escapeHtml(memory.id)}" data-content="${escapeHtml(memory.content)}" data-category="${escapeHtml(memory.category || 'CUSTOM')}">编辑</button><button class="ghost mini-btn" data-action="delete-travel-memory" data-id="${escapeHtml(memory.id)}">删除</button></div>
-          </article>
-        `).join('') : '<div class="notice">暂无已确认记忆。聊天中说“以后尽量少走路”后，悠悠会先询问是否记住。</div>'}
+      <div class="memory-review-status">
+        <span>智能感知：实时提取旅行偏好，互斥冲突项以最新记忆为准自动替换</span>
+        <time>7天自动归档淘汰</time>
       </div>
+      <div class="memory-priority-line"><span>本次明确输入</span><b>›</b><span>左侧前置提示词画像</span><b>›</b><span>右侧近期记忆溯源</span></div>
+      ${memoryCandidates.length ? `<div class="memory-candidate-list"><div class="candidate-list-header"><strong>待你确认的记忆建议</strong><span class="candidate-tip">确认后自动增量融入左侧前置提示词</span></div>${memoryCandidates.map((candidate) => `<article class="memory-candidate-item"><div class="candidate-item-main"><div class="candidate-tags"><span class="travel-memory-category">${escapeHtml(memoryCategoryLabel(candidate.category))}</span><span class="travel-memory-source-badge badge-pending">待确认候选</span></div><b>${escapeHtml(candidate.content)}</b><div class="travel-memory-origin-box"><span class="origin-label">💡 来源提示：</span><span class="origin-text">${candidate.sourceRef ? `历史对话提到“${escapeHtml(candidate.sourceRef)}”` : '由后台智能分析识别'} · 确认后自动增量融入左侧前置提示词。</span></div></div><div class="candidate-item-actions"><button class="ghost mini-btn" data-action="dismiss-profile-memory-candidate" data-id="${escapeHtml(candidate.id)}">忽略</button><button class="primary mini-btn" data-action="confirm-profile-memory-candidate" data-id="${escapeHtml(candidate.id)}">确认记住</button></div></article>`).join('')}</div>` : ''}
+      <div class="travel-memory-list">
+        ${memories.length ? visibleMemories.map((memory) => {
+          const isManual = memory.sourceType === 'USER_EDIT';
+          const originText = memory.sourceRef
+            ? `源自对话表达“${escapeHtml(memory.sourceRef)}”，经你确认生效。`
+            : (isManual ? '由你在个人档案手动添加录入。' : '历史对话中识别表达，经你确认生效。');
+          return `
+          <article class="travel-memory-item" data-travel-memory-id="${escapeHtml(memory.id)}">
+            <div class="travel-memory-body">
+              <div class="travel-memory-header-row">
+                <span class="travel-memory-category">${escapeHtml(memoryCategoryLabel(memory.category))}</span>
+                <span class="travel-memory-source-badge ${isManual ? 'badge-manual' : 'badge-chat'}">
+                  ${isManual ? '✍️ 手动档案录入' : '💬 对话提取并确认'}
+                </span>
+                <span class="travel-memory-ttl-badge">7天有效</span>
+              </div>
+              <strong class="travel-memory-content">${escapeHtml(memory.content)}</strong>
+              <div class="travel-memory-origin-box">
+                <span class="origin-label">💡 偏好溯源与影响：</span>
+                <span class="origin-text">${originText} 已增量融入左侧前置提示词。</span>
+              </div>
+              <small class="travel-memory-date">更新于 ${new Date(memory.updatedAt || memory.updated_at || memory.createdAt || memory.created_at || Date.now()).toLocaleDateString('zh-CN')}</small>
+            </div>
+            <div class="travel-memory-actions">
+              <button class="ghost mini-btn" data-action="edit-travel-memory" data-id="${escapeHtml(memory.id)}" data-content="${escapeHtml(memory.content)}" data-category="${escapeHtml(memory.category || 'CUSTOM')}">编辑</button>
+              <button class="ghost mini-btn" data-action="delete-travel-memory" data-id="${escapeHtml(memory.id)}">删除</button>
+            </div>
+          </article>
+          `;
+        }).join('') : '<div class="notice">暂无近期记忆。聊天中说“我不吃辣”或“喜欢老茶馆”，悠悠会提炼并询问是否记住。</div>'}
+      </div>
+
+      ${memories.length > 3 ? `
+        <div class="memory-expand-row">
+          <button type="button" class="ghost mini-btn expand-memories-toggle" data-action="toggle-expand-memories">
+            ${isExpanded ? '▴ 收起部分记忆 (仅看最新3条)' : `▾ 展开其余 ${hiddenCount} 条近期记忆`}
+          </button>
+        </div>
+      ` : ''}
+
       <div class="add-pref-inline memory-add-row">
-        <input id="new-memory-input" placeholder="添加旅行记忆，例如：喜欢老茶馆、不吃香菜…" />
+        <input id="new-memory-input" placeholder="添加近期旅行记忆，例如：喜欢老茶馆、不吃香菜…" />
         <button class="primary" data-action="add-travel-memory">添加记忆</button>
       </div>
     </section>
@@ -84,7 +173,10 @@ export function profileView() {
   }
 
   if (!state.profile) {
-    return `<main class="page shell"><div class="panel trip-empty"><p>正在读取旅行档案……</p></div></main>`;
+    if (state.profileLoadError) {
+      return `<main class="page shell"><div class="panel trip-empty"><div><div class="empty-symbol">!</div><h2>旅行档案暂时无法读取</h2><p class="muted">${escapeHtml(state.profileLoadError)}</p><button class="primary" data-action="refresh-profile" ${state.profileLoading ? 'disabled' : ''}>${state.profileLoading ? '重新读取中…' : '重新读取档案'}</button></div></div></main>`;
+    }
+    return `<main class="page shell"><div class="panel trip-empty"><p>${state.profileLoading ? '正在读取旅行档案……' : '准备读取旅行档案……'}</p></div></main>`;
   }
 
   const memories = state.profile.memories || [];
@@ -99,12 +191,13 @@ export function profileView() {
           <h2>旅行档案 · ${escapeHtml(state.user.name || '旅行者')}</h2>
           <p>直观管理您的长期出行偏好、足迹资产与规划演化历程。</p>
         </div>
-        <button class="secondary" data-action="refresh-profile">刷新档案</button>
+        <button class="secondary" data-action="refresh-profile" ${state.profileLoading ? 'disabled' : ''}>${state.profileLoading ? '刷新中…' : '刷新档案'}</button>
       </div>
 
-      ${profileStatsHtml({ trips, memories, history })}
+      ${profileStatsHtml({ trips, memories, history, memoryEnabled: state.profile.memoryEnabled === true })}
 
       <div class="profile-layout-grid">
+        ${prependPromptPanelHtml()}
         ${memoryProfilePanelHtml()}
 
         <section class="panel panel-pad">
@@ -135,13 +228,20 @@ export function profileView() {
 export async function loadProfile(renderViewCallback, { force = false } = {}) {
   if (!state.user) return;
   if (!force && state.profile && isPageDataFresh('profile')) return state.profile;
+  if (state.profileLoading) return state.profile;
+  state.profileLoading = true;
+  state.profileLoadError = '';
+  if (state.view === 'profile' && renderViewCallback) renderViewCallback();
   try {
-    state.profile = await request('/api/profile');
+    state.profile = await request('/api/profile', { timeoutMs: 15000 });
     markPageDataFresh('profile');
-    if (state.view === 'profile' && renderViewCallback) renderViewCallback();
     return state.profile;
   } catch (error) {
+    state.profileLoadError = error?.message || '无法读取旅行档案，请稍后重试。';
     toast(error.message);
+  } finally {
+    state.profileLoading = false;
+    if (state.view === 'profile' && renderViewCallback) renderViewCallback();
   }
 }
 
@@ -165,6 +265,20 @@ export function refreshProfileMemoryInDOM() {
   });
   return true;
 }
+
+export function refreshProfilePrependPromptInDOM() {
+  if (state.view !== 'profile' || !state.profile) return false;
+  const panel = document.querySelector('.prepend-prompt-panel');
+  if (!panel) return false;
+  panel.outerHTML = prependPromptPanelHtml();
+  document.querySelectorAll('[data-profile-prompt-status]').forEach((element) => {
+    element.textContent = state.profile.memoryEnabled === true ? '已启用' : '未开启';
+  });
+  return true;
+}
+
+export const refreshProfileSlotsInDOM = refreshProfilePrependPromptInDOM;
+export const preferenceSlotsPanelHtml = prependPromptPanelHtml;
 
 export async function rememberPreference(renderModalsCallback) {
   if (!state.user) return;

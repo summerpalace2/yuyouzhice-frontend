@@ -4,6 +4,7 @@ import { escapeHtml } from '../lib/security.js';
 export function planningLoader() {
   if (!state.loading || !state.loadingPhase) return '';
   const phases = [
+    ['读取旅行偏好', '只在你开启并确认后参考长期信息'],
     ['理解旅行条件', '整理时间、同行人、体力和偏好'],
     ['检索可信信息', '由服务端提供景点、路线与事实依据'],
     ['组合路线', '优化景点顺序与公共交通/步行衔接'],
@@ -40,6 +41,7 @@ export function renderLoader() {
   }
 
   const phases = [
+    ['读取旅行偏好', '只在你开启并确认后参考长期信息'],
     ['理解旅行条件', '整理时间、同行人、体力和偏好'],
     ['检索可信信息', '由服务端提供景点、路线与事实依据'],
     ['组合路线', '优化景点顺序与公共交通/步行衔接'],

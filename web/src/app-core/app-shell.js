@@ -56,6 +56,15 @@ export function renderView() {
   if (previousView !== nextView && restoreViewSnapshot(nextView, mount)) return;
   const viewFn = views[state.view] || homeView;
   mount.innerHTML = viewFn();
+
+  if (state.view === 'planning' && state.trip) {
+    if (state.mapFullscreen) {
+      if (fullscreenMapRenderTimer) window.clearTimeout(fullscreenMapRenderTimer);
+      fullscreenMapRenderTimer = window.setTimeout(() => renderFullscreenMap().catch((error) => console.warn('全屏地图暂时不可用。', error)), 0);
+    } else {
+      scheduleTripMap();
+    }
+  }
 }
 
 export function renderFloatingBtn() {

@@ -23,6 +23,7 @@ export const useTripStore = defineStore('trip', () => {
 
   const loading = ref(false);
   const loadingPhase = ref('');
+  const dynamicRefreshing = ref(false);
   const constraintEditing = ref(false);
 
   const selectedMapDay = ref(0);
@@ -136,10 +137,13 @@ export const useTripStore = defineStore('trip', () => {
     preserveSavedTripId?: boolean;
   } = {}) {
     if (!opts.preserveSavedTripId) savedTripId.value = null;
+    trip.value = null;
+    sessionId.value = null;
+    sessionAccessToken.value = null;
     loading.value = true;
-    loadingPhase.value = '理解旅行条件';
+    loadingPhase.value = '识别意图';
 
-    const phases = ['理解旅行条件', '检索可信信息', '组合路线', '生成方案'];
+    const phases = ['识别意图', '定位地点', '搜索周边', '规划路线'];
     const phaseTimer = window.setInterval(() => {
       const idx = phases.indexOf(loadingPhase.value);
       if (idx >= 0 && idx < phases.length - 1) {
@@ -171,6 +175,9 @@ export const useTripStore = defineStore('trip', () => {
       ui.preferenceProposal = data.preferenceProposal || null;
       ui.showToast(opts.usePreferences ? '已沿用长期偏好生成定制行程。' : '专属行程已生成！支持地图分天切换与自由微调。');
     } catch (err: any) {
+      trip.value = null;
+      sessionId.value = null;
+      sessionAccessToken.value = null;
       ui.showToast(err.message || '规划失败');
       throw err;
     } finally {
@@ -326,6 +333,33 @@ export const useTripStore = defineStore('trip', () => {
     loading.value = true;
     detailContext.value = context;
     if (context.fromView) detailFromView.value = context.fromView;
+
+    const stop = context?.stop;
+    if (stop && (stop.type === 'DINING' || stop.isDining || stop.specialtyDish || id.includes('dining') || stop.name?.includes('餐推荐'))) {
+      detail.value = {
+        id: stop.id,
+        name: stop.name,
+        district: stop.district || '周边特色片区',
+        type: '特色餐饮美食',
+        isDining: true,
+        specialtyDish: stop.specialtyDish,
+        costSummary: stop.averageCost || stop.costSummary || '人均约 45-65 元',
+        diningType: stop.diningType || (stop.name.includes('午餐') ? '午餐推荐' : '晚餐推荐'),
+        duration: stop.duration || '约 60 分钟',
+        ticket: '无门票 · 按需点餐',
+        bestTime: stop.time || (stop.name.includes('午餐') ? '11:30 - 13:30' : '17:30 - 20:30'),
+        walk: stop.distanceFromAttraction || stop.walk || '邻近游玩景区步行可达',
+        fit: '适合自由行、家庭亲子、朋友小聚及地道风味品尝',
+        summary: stop.summary || `精选重庆地道美食名店，紧邻行程景区，招牌菜品特色鲜明。`,
+        intro: stop.recommendationReason || `推荐品尝【${stop.specialtyDish || '地道特色招牌菜'}】，参考人均预算 ${stop.averageCost || stop.costSummary || '45-65 元'}。`,
+        tags: ['地道美食', '巴渝风味', stop.district || '同片区', stop.specialtyDish ? '招牌必吃' : '老字号'].filter(Boolean),
+        location: stop.location || '',
+        aiGuide: `【渝悠悠探店必点攻略】\n• 招牌特色：${stop.specialtyDish || '地道招牌菜品'}\n• 预计人均：${stop.averageCost || stop.costSummary || '45-65 元/人'}\n• 就近动线：${stop.distanceFromAttraction || stop.walk || '紧邻当前游玩景区，步行可达'}\n• 点餐与避坑：就餐高峰期（12:00-13:00 / 18:00-19:30）建议提前电话确认或避开排队；不能吃太辣可要求店家做“微辣”或搭配山城冰汤圆解辣。`
+      };
+      loading.value = false;
+      return;
+    }
+
     try {
       const data = await request<{ detail: any }>(`/api/attractions/${id}`);
       detail.value = data.detail;
@@ -333,6 +367,32 @@ export const useTripStore = defineStore('trip', () => {
       ui.showToast(err.message);
     } finally {
       loading.value = false;
+    }
+  }
+
+  async function refreshDynamicData() {
+    if (!sessionId.value) {
+      ui.showToast('请先生成一份行程，再刷新天气与路线。');
+      return;
+    }
+    dynamicRefreshing.value = true;
+    try {
+      const data = await request<{
+        trip?: TripPlan;
+        dynamicRefresh?: { weatherDaysResolved?: number; weatherQuery?: string };
+      }>(`/api/planner/sessions/${encodeURIComponent(sessionId.value)}/dynamic-refresh`, {
+        method: 'POST',
+        headers: sessionAccessToken.value ? { 'x-plan-session-token': sessionAccessToken.value } : {}
+      });
+      if (data.trip) trip.value = data.trip;
+      const resolved = Number(data.dynamicRefresh?.weatherDaysResolved || 0);
+      ui.showToast(resolved > 0
+        ? `已刷新 ${resolved} 天天气与路线动态。`
+        : (data.dynamicRefresh?.weatherQuery || '已发起动态查询，但当前没有可匹配的天气日期。'));
+    } catch (err: any) {
+      ui.showToast(err.message || '刷新天气与路线失败');
+    } finally {
+      dynamicRefreshing.value = false;
     }
   }
 
@@ -407,6 +467,7 @@ export const useTripStore = defineStore('trip', () => {
     savedTripId,
     loading,
     loadingPhase,
+    dynamicRefreshing,
     constraintEditing,
     selectedMapDay,
     selectedStopId,
@@ -438,6 +499,7 @@ export const useTripStore = defineStore('trip', () => {
     loadExplore,
     addExploreAttraction,
     openDetail,
+    refreshDynamicData,
     updateTripWithAttraction,
     loadHistory,
     loadHistorySession,

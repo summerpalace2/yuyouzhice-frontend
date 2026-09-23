@@ -5,10 +5,12 @@
  * 具体用户流程逐步下沉到对应 feature handler。架构规则见 docs/frontend-architecture.md。
  */
 
+import './styles.css';
+
 // 1. 领域模型与响应式状态
 export { GOLDEN_PROMPT, preferences, state } from './src/app-core/state.js';
 import { GOLDEN_PROMPT, preferences, state } from './src/app-core/state.js';
-import { saveUserPlan, saveUserChats, loadUserPlan, syncAnonymousDraftToUser, loadUserChats, getTripChatKey } from './src/app-core/user-store.js';
+import { saveUserPlan, saveUserChats, loadUserPlan, syncAnonymousDraftToUser, loadUserChats, getTripChatKey, startGuestChatSession } from './src/app-core/user-store.js';
 import { persistTripWorkspace } from './src/features/trip-workspace/workspace-service.js';
 import { clearPageCache, invalidatePageCache, markPageDataFresh } from './src/app-core/page-cache.js';
 import { bootstrapApplication } from './src/app-core/bootstrap.js';
@@ -154,6 +156,7 @@ import { slots, constraintValues } from './src/features/trip-planning/slots-form
 
 export { plan, refreshDynamicData } from './src/features/trip-planning/planner-service.js';
 import { plan, refreshDynamicData } from './src/features/trip-planning/planner-service.js';
+import { buildSpatialContinuationOptions } from './src/features/trip-planning/spatial-recovery.js';
 
 export { replanModal } from './src/features/trip-replan/replan-modal.js';
 import { replanModal } from './src/features/trip-replan/replan-modal.js';
@@ -222,12 +225,16 @@ import {
 export {
   updateExploreGridInDOM,
   loadExplore,
-  addExploreAttraction
+  addExploreAttraction,
+  searchAmapPois,
+  triggerAmapExploreSearch
 } from './src/features/explore-search/explore-service.js';
 import {
   updateExploreGridInDOM,
   loadExplore,
-  addExploreAttraction
+  addExploreAttraction,
+  searchAmapPois,
+  triggerAmapExploreSearch
 } from './src/features/explore-search/explore-service.js';
 
 export {
@@ -235,6 +242,8 @@ export {
   updateAdminDocListInDOM,
   health,
   loadRerankStats,
+  loadIntentShadowStats,
+  probeIntentCapability,
   clearRerankCache
 } from './src/features/admin-corpus/admin-service.js';
 import {
@@ -242,6 +251,8 @@ import {
   updateAdminDocListInDOM,
   health,
   loadRerankStats,
+  loadIntentShadowStats,
+  probeIntentCapability,
   clearRerankCache
 } from './src/features/admin-corpus/admin-service.js';
 
@@ -264,11 +275,23 @@ import { tripsView, refreshTripsInDOM } from './src/pages/trips-page.js';
 export { historyView, loadHistory, loadHistorySession } from './src/pages/history-page.js';
 import { historyView, loadHistory, loadHistorySession } from './src/pages/history-page.js';
 
-export { profileView, loadProfile, rememberPreference, refreshProfileInDOM, refreshProfileMemoryInDOM } from './src/pages/profile-page.js';
-import { profileView, loadProfile, rememberPreference, refreshProfileInDOM, refreshProfileMemoryInDOM } from './src/pages/profile-page.js';
+export { profileView, loadProfile, rememberPreference, refreshProfileInDOM, refreshProfileMemoryInDOM, refreshProfileSlotsInDOM } from './src/pages/profile-page.js';
+import { profileView, loadProfile, rememberPreference, refreshProfileInDOM, refreshProfileMemoryInDOM, refreshProfileSlotsInDOM } from './src/pages/profile-page.js';
 
-export { adminView, switchAdminSectionInDOM, refreshRerankPanelInDOM } from './src/pages/admin-page.js';
-import { adminView, switchAdminSectionInDOM, refreshRerankPanelInDOM } from './src/pages/admin-page.js';
+export {
+  adminView,
+  switchAdminSectionInDOM,
+  refreshRerankPanelInDOM,
+  updateAdminAttractionListInDOM,
+  updateAdminUserListInDOM
+} from './src/pages/admin-page.js';
+import {
+  adminView,
+  switchAdminSectionInDOM,
+  refreshRerankPanelInDOM,
+  updateAdminAttractionListInDOM,
+  updateAdminUserListInDOM
+} from './src/pages/admin-page.js';
 
 export { guestChatView } from './src/pages/guest-chat-page.js';
 import { guestChatView } from './src/pages/guest-chat-page.js';
@@ -295,7 +318,94 @@ import {
 
 // DOM 根容器引用与计时器
 const app = document.querySelector('#app');
+const eventRoot = app;
 let dynamicRefreshTimer = null;
+let plannerContextPrefetch = null;
+
+// 根节点继续使用事件委托，但每个动作只交给一个领域处理器。
+// 未命中的 handler 不应被所有点击逐一 await，避免把普通 UI 操作串成异步链。
+const ACTION_OWNER = new Map([
+  ...[
+    'select-place-candidate', 'confirm-region-reference', 'retry-spatial-plan'
+  ].map((action) => [action, 'planning']),
+  ...[
+    'go', 'admin-section', 'switch-perspective', 'enter-planner-test',
+    'login', 'open-auth-page', 'set-auth-mode', 'close-login'
+  ].map((action) => [action, 'navigation']),
+  ...[
+    'admin-doc-topic', 'toggle-admin-docs-fold', 'toggle-doc-expand', 'edit-doc',
+    'admin-attraction-filter', 'admin-user-role-filter',
+    'view-user-detail', 'close-user-detail', 'view-feedback-detail',
+    'close-feedback-detail', 'close-doc-edit', 'toggle-user-role',
+    'clear-admin-rerank-cache', 'probe-admin-intent-capability', 'reset-user-data',
+    'delete-user', 'cancel-user-action', 'confirm-user-action'
+  ].map((action) => [action, 'admin']),
+  ...[
+    'refresh-profile', 'add-custom-preference', 'confirm-memory-candidate',
+    'dismiss-memory-candidate', 'add-travel-memory', 'edit-travel-memory',
+    'delete-travel-memory', 'confirm-profile-memory-candidate',
+    'dismiss-profile-memory-candidate', 'toggle-travel-memory',
+    'enable-travel-memory', 'remove-preference',
+    'toggle-slot-tag', 'remove-slot-tag', 'add-custom-slot-tag',
+    'save-prepend-prompt', 'resynthesize-prepend-prompt', 'toggle-expand-memories'
+  ].map((action) => [action, 'profile']),
+  ...[
+    'select-stop', 'cancel-select-stop', 'clear-selected-stop', 'clear-stop-selection',
+    'toggle-pin-stop', 'select-option', 'dismiss-suggestion', 'reopen-suggestion',
+    'replan-v1', 'confirm-planner-proposal', 'force-apply-planner-proposal',
+    'open-planner-proposal', 'close-planner-proposal', 'switch-chat-mode',
+    'switch-adjustment-mode', 'request-other-proposals', 'open-chat-dock',
+    'close-chat-dock', 'dismiss-planner-proposal', 'reset-chat',
+    'unpin-and-retry', 'cancel-chat', 'retry-chat', 'quick-ai-action',
+    'quick-same-district-replace', 'execute-action-chip'
+  ].map((action) => [action, 'chat'])
+]);
+
+const PLANNER_CONTEXT_WAIT_MS = 1500;
+
+/**
+ * 登录后后台预取轻量规划上下文。
+ * 规划点击时优先消费已完成的 Promise；未完成时最多短暂等待，超时则按当前输入继续规划。
+ */
+function prefetchPlannerContext() {
+  const userId = String(state.user?.id || '');
+  if (!userId) {
+    plannerContextPrefetch = null;
+    return null;
+  }
+  if (plannerContextPrefetch?.userId === userId) return plannerContextPrefetch.promise;
+
+  const promise = request('/api/planner/context', { timeoutMs: 5000 })
+    .then((data) => {
+      if (data) {
+        if (!state.profile) {
+          state.profile = data;
+        } else {
+          if (data.profilePrependPrompt) state.profile.profilePrependPrompt = data.profilePrependPrompt;
+          if (Array.isArray(data.memories)) state.profile.memories = data.memories;
+          if (Array.isArray(data.diningSlots)) state.profile.diningSlots = data.diningSlots;
+          if (Array.isArray(data.attractionSlots)) state.profile.attractionSlots = data.attractionSlots;
+        }
+      }
+      return { userId, data };
+    })
+    .catch(() => null);
+  plannerContextPrefetch = { userId, promise };
+  return promise;
+}
+
+async function readPlannerContext() {
+  if (state.profile) return state.profile;
+  const currentUserId = String(state.user?.id || '');
+  const promise = prefetchPlannerContext();
+  if (!promise) return null;
+
+  const result = await Promise.race([
+    promise,
+    new Promise((resolve) => window.setTimeout(() => resolve(null), PLANNER_CONTEXT_WAIT_MS))
+  ]);
+  return result?.userId === currentUserId ? result.data : null;
+}
 
 function scheduleDynamicRefresh() {
   if (!state.user || !state.trip || !state.sessionId || state.dynamicRefreshing
@@ -415,37 +525,35 @@ async function doPlan(opts = {}) {
  * 本次表单条件会被暂存，用户选择后只发起一次 /api/plan 请求。
  */
 async function requestPlan(opts = {}) {
-  const hasDecision = typeof opts.usePreferences === 'boolean' || Boolean(opts.preferenceDecision);
-  if (!state.user || hasDecision) {
-    await doPlan(opts);
+  if (state.planningRequestActive) {
+    toast('规划请求正在处理中，请稍候。');
     return;
   }
 
-  try {
-    const profile = state.profile || await request('/api/profile');
-    state.profile = profile;
-    const preferences = Array.isArray(profile?.preferences) ? profile.preferences.filter(Boolean) : [];
-    const memories = profile?.memoryEnabled === true && Array.isArray(profile?.memories)
-      ? profile.memories.filter((memory) => memory?.content)
-      : [];
-    if (preferences.length || memories.length) {
-      const summary = [
-        preferences.length ? `${preferences.length} 条已确认偏好` : '',
-        memories.length ? `${memories.length} 条已启用旅行记忆` : ''
-      ].filter(Boolean).join('和');
-      state.pendingPlanOptions = opts;
-      state.preferenceProposal = {
-        copy: `检测到你的${summary}。本次行程是否要作为辅助参考？本次明确输入始终优先。`
-      };
-      renderModals();
-      return;
-    }
-  } catch (error) {
-    // 档案读取失败时不阻断当前行程；按“本次输入优先”继续生成并保留可见提示。
-    toast('暂时无法读取旅行档案，本次将只按当前输入生成。');
-  }
+  const promptInput = document.querySelector('#prompt-input');
+  const usePrefs = typeof opts.usePreferences === 'boolean'
+    ? opts.usePreferences
+    : (state.useMemoriesInPlan !== false);
+  const decision = typeof opts.preferenceDecision === 'string' && opts.preferenceDecision
+    ? opts.preferenceDecision
+    : (usePrefs ? 'use' : 'ignore');
 
-  await doPlan({ ...opts, usePreferences: false, preferenceDecision: 'ignore' });
+  const requestOptions = {
+    ...opts,
+    usePreferences: usePrefs,
+    preferenceDecision: decision,
+    prompt: typeof opts.prompt === 'string'
+      ? opts.prompt
+      : (promptInput ? promptInput.value : state.prompt)
+  };
+  state.prompt = requestOptions.prompt;
+
+  state.planningRequestActive = true;
+  try {
+    await doPlan(requestOptions);
+  } finally {
+    state.planningRequestActive = false;
+  }
 }
 
 async function doRemoveStop(stopId) {
@@ -477,6 +585,13 @@ async function doAddExploreAttraction(id, day) {
 }
 
 async function doOpenDetail(id, context = {}) {
+  const stop = state.trip?.days?.flatMap((d) => d.stops || [])
+    .find((s) => s.id === context.stopId || s.id === id || s.venueId === id);
+  if (stop && (stop.type === 'DINING' || stop.icon === '餐' || !id || id.startsWith('dining-'))) {
+    state.activeDiningStop = stop;
+    renderModals();
+    return;
+  }
   await openDetail(id, context, { renderHeader, renderView });
 }
 
@@ -484,12 +599,15 @@ async function doUpdateTripWithAttraction(operation, target) {
   await updateTripWithAttraction(operation, target, { renderLoader, render, scheduleTripMap });
 }
 
-async function doSendChatMessage(inputOverride = undefined, preserveInput = false) {
-  await sendChatMessage({ renderView, scheduleTripMap, inputOverride, preserveInput });
+async function doSendChatMessage(options = undefined, maybePreserveInput = false) {
+  const opts = typeof options === 'string'
+    ? { inputOverride: options, preserveInput: maybePreserveInput }
+    : (options && typeof options === 'object' ? options : {});
+  await sendChatMessage({ renderView, scheduleTripMap, ...opts });
 }
 
-async function doApplyPlannerProposal() {
-  await applyPlannerProposal({ renderView, scheduleTripMap });
+async function doApplyPlannerProposal(options = {}) {
+  await applyPlannerProposal({ renderView, scheduleTripMap, renderChatInDOM, ...options });
 }
 
 async function doHealth({ renderAfterLoad = true } = {}) {
@@ -512,6 +630,7 @@ async function doHealth({ renderAfterLoad = true } = {}) {
 
 async function doLogout() {
   await logout(render);
+  plannerContextPrefetch = null;
 }
 
 async function doRememberPreference() {
@@ -519,14 +638,14 @@ async function doRememberPreference() {
 }
 
 // 挂载全局事件委托监听
-if (app) {
+if (eventRoot) {
   // <details> 自己管理展开/收起，但将状态同步到 store，避免任何后续根视图重绘把它折叠。
-  app.addEventListener('toggle', (event) => {
+  eventRoot.addEventListener('toggle', (event) => {
     if (event.target instanceof HTMLDetailsElement && event.target.classList.contains('admin-users-disclosure')) {
       state.adminUsersExpanded = event.target.open;
     }
   }, true);
-  app.addEventListener('input', (event) => {
+  eventRoot.addEventListener('input', (event) => {
     if (event.target.id === 'prompt-input') state.prompt = event.target.value;
     if (event.target.id === 'chat-input') {
       state.chatInput = event.target.value;
@@ -535,14 +654,27 @@ if (app) {
     if (event.target.id === 'explore-query') {
       state.exploreQuery = event.target.value;
       updateExploreGridInDOM();
+      triggerAmapExploreSearch(event.target.value);
     }
     if (event.target.id === 'admin-doc-search') {
       state.adminDocQuery = event.target.value;
       updateAdminDocListInDOM();
     }
+    if (event.target.id === 'admin-attraction-search') {
+      state.adminAttractionQuery = event.target.value;
+      updateAdminAttractionListInDOM();
+    }
+    if (event.target.id === 'admin-user-search') {
+      state.adminUserQuery = event.target.value;
+      updateAdminUserListInDOM();
+    }
+    if (event.target.id === 'prepend-prompt-editor') {
+      const counter = document.getElementById('prepend-prompt-count');
+      if (counter) counter.textContent = String(event.target.value.length);
+    }
   });
 
-  app.addEventListener('change', (event) => {
+  eventRoot.addEventListener('change', (event) => {
     if (event.target.id === 'chat-mode') {
       state.chatMode = event.target.value === 'planner' ? 'planner' : 'chat';
       saveUserPlan(state.user?.id, {
@@ -561,7 +693,7 @@ if (app) {
     }
   });
 
-  app.addEventListener('keydown', async (event) => {
+  eventRoot.addEventListener('keydown', async (event) => {
     if (event.key === 'Escape' && state.plannerProposalDockOpen) {
       state.plannerProposalDockOpen = false;
       renderPlannerProposalDockInDOM();
@@ -581,10 +713,42 @@ if (app) {
     if (event.target.id === 'explore-query' && event.key === 'Enter') {
       event.preventDefault();
       updateExploreGridInDOM();
+      void searchAmapPois(event.target.value);
     }
   });
 
-  app.addEventListener('submit', async (event) => {
+function buildPromptFromConstraints(c) {
+  const parts = [];
+  if (c.startPlace) {
+    parts.push(`从${c.startPlace}出发`);
+  }
+  if (c.timeBudgetMinutes > 0) {
+    parts.push(`${c.timeBudgetMinutes}分钟短途规划`);
+  } else if (c.durationDays > 0) {
+    parts.push(`重庆${c.durationDays}天旅游方案`);
+  }
+  if (c.companions && c.companions !== '未提供') {
+    parts.push(c.companions);
+  }
+  if (c.walkingTolerance === '低') {
+    parts.push('少走路');
+  }
+  if (Array.isArray(c.interests) && c.interests.length > 0) {
+    parts.push(c.interests.join('、'));
+  }
+  if (c.transportPreference && c.transportPreference !== '未提供') {
+    parts.push(c.transportPreference);
+  }
+  if (c.dietPreference && c.dietPreference !== '未提供') {
+    parts.push(c.dietPreference);
+  }
+  if (c.stayArea && c.stayArea !== '未提供') {
+    parts.push(`住在${c.stayArea}`);
+  }
+  return parts.join('，') || '重庆旅游规划方案';
+}
+
+  eventRoot.addEventListener('submit', async (event) => {
     const action = event.target.dataset.action;
     if (action === 'chat-form') {
       event.preventDefault();
@@ -594,10 +758,27 @@ if (app) {
     if (action === 'constraints-form') {
       event.preventDefault();
       state.constraintEditing = false;
+      const values = constraintValues(event.target);
+      const updatedPrompt = buildPromptFromConstraints(values);
+      state.prompt = updatedPrompt;
       await requestPlan({
-        constraints: constraintValues(event.target),
+        prompt: updatedPrompt,
+        constraints: values,
+        usePreferences: false,
+        preferenceDecision: 'ignore',
         preserveSavedTripId: Boolean(state.savedTripId)
       });
+      return;
+    }
+    if (action === 'spatial-refine-form') {
+      event.preventDefault();
+      const prompt = String(new FormData(event.target).get('prompt') || '').trim();
+      if (!prompt) {
+        toast('请先补充或修正地点条件。');
+        return;
+      }
+      const options = buildSpatialContinuationOptions({ trip: state.trip, prompt, action: 'refine' });
+      await requestPlan(options);
       return;
     }
     if (action === 'save-doc-form') {
@@ -707,6 +888,8 @@ if (app) {
       if (state.view === 'planning' && state.trip) scheduleTripMap();
       if (state.view === 'planning' && state.trip) scheduleDynamicRefresh();
       toast(data.message);
+      // 预取轻量规划上下文，下一次点击规划时不再先等待账号档案接口。
+      void prefetchPlannerContext();
       if (after === 'save') await doSaveTrip();
       if (after === 'memory') await doRememberPreference();
       if (after === 'feedback') await sendFeedback(state.pendingFeedback || 'needs-work');
@@ -722,87 +905,126 @@ if (app) {
     }
   });
 
-  app.addEventListener('click', async (event) => {
+  eventRoot.addEventListener('click', async (event) => {
     const target = event.target.closest('[data-action]');
     if (!target) return;
     const action = target.dataset.action;
 
-    const navigationHandled = await handleNavigationAction({
-      action,
-      target,
-      state,
-      renderHeader,
-      renderView,
-      renderFloatingBtn,
-      renderModals,
-      loadUserPlan,
-      loadUserChats,
-      getTripChatKey,
-      loadExplore,
-      loadTrips,
-      loadHistory,
-      loadProfile,
-      refreshProfileInDOM,
-      scheduleTripMap,
-      scheduleDynamicRefresh,
-      loadAdminHealth: doHealth,
-      switchAdminSectionInDOM,
-      toast
-    });
-    if (navigationHandled) return;
-
-    const adminHandled = await handleAdminAction({
-      action,
-      target,
-      app,
-      state,
-      request,
-      toast,
-      renderModals,
-      renderView,
-      updateAdminDocListInDOM,
-      clearRerankCache,
-      loadRerankStats,
-      refreshRerankPanelInDOM,
-      loadAdminHealth: doHealth
-    });
-    if (adminHandled) return;
-
-    const profileHandled = await handleProfileAction({
-      action,
-      target,
-      state,
-      request,
-      toast,
-      loadProfile,
-      refreshProfileInDOM,
-      refreshProfileMemoryInDOM,
-      renderChatInDOM,
-      renderView,
-      invalidatePageCache,
-      markPageDataFresh
-    });
-    if (profileHandled) return;
-
-    const chatHandled = await handleChatAction({
-      action,
-      target,
-      state,
-      toast,
-      renderView,
-      renderFloatingBtn,
-      renderChatInDOM,
-      renderPlannerProposalDockInDOM,
-      saveUserPlan,
-      saveUserChats,
-      persistTripWorkspace,
-      getTripChatKey,
-      sendChatMessage: doSendChatMessage,
-      cancelChatMessage: () => cancelChatMessage({ renderView }),
-      applyPlannerProposal: doApplyPlannerProposal,
-      planFromCurrent: requestPlan
-    });
-    if (chatHandled) return;
+    const owner = ACTION_OWNER.get(action);
+    try {
+      if (owner === 'navigation') {
+        handleNavigationAction({
+          action,
+          target,
+          state,
+          renderHeader,
+          renderView,
+          renderFloatingBtn,
+          renderModals,
+          loadUserPlan,
+          loadUserChats,
+          getTripChatKey,
+          startGuestChatSession,
+          loadExplore,
+          loadTrips,
+          loadHistory,
+          loadProfile,
+          refreshProfileInDOM,
+          scheduleTripMap,
+          scheduleDynamicRefresh,
+          loadAdminHealth: doHealth,
+          switchAdminSectionInDOM,
+          toast
+        });
+        return;
+      }
+      if (owner === 'admin') {
+        await handleAdminAction({
+          action,
+          target,
+          app,
+          state,
+          request,
+          toast,
+          renderModals,
+          renderView,
+          updateAdminDocListInDOM,
+          updateAdminAttractionListInDOM,
+          updateAdminUserListInDOM,
+          clearRerankCache,
+          loadRerankStats,
+          loadIntentShadowStats,
+          probeIntentCapability,
+          refreshRerankPanelInDOM,
+          loadAdminHealth: doHealth
+        });
+        return;
+      }
+      if (owner === 'profile') {
+        await handleProfileAction({
+          action,
+          target,
+          state,
+          request,
+          toast,
+          loadProfile,
+          refreshProfileInDOM,
+          refreshProfileMemoryInDOM,
+          refreshProfileSlotsInDOM,
+          renderChatInDOM,
+          renderView,
+          invalidatePageCache,
+          markPageDataFresh
+        });
+        return;
+      }
+      if (owner === 'chat') {
+        await handleChatAction({
+          action,
+          target,
+          state,
+          toast,
+          renderView,
+          renderFloatingBtn,
+          renderChatInDOM,
+          renderPlannerProposalDockInDOM,
+          saveUserPlan,
+          saveUserChats,
+          persistTripWorkspace,
+          getTripChatKey,
+          sendChatMessage: doSendChatMessage,
+          cancelChatMessage: () => cancelChatMessage({ renderView }),
+          applyPlannerProposal: doApplyPlannerProposal,
+          planFromCurrent: requestPlan,
+          scheduleTripMap,
+          invalidatePageCache
+        });
+        return;
+      }
+      if (owner === 'planning') {
+        const spatial = state.trip?.spatialPlan;
+        const alternatives = spatial?.placeResolution?.alternatives || [];
+        const candidateIndex = Number.parseInt(target.dataset.candidateIndex || '-1', 10);
+        const candidate = Number.isInteger(candidateIndex) ? alternatives[candidateIndex] : null;
+        const continuationAction = action === 'select-place-candidate'
+          ? 'select-candidate'
+          : action === 'confirm-region-reference'
+            ? 'confirm-reference'
+            : 'retry';
+        const options = buildSpatialContinuationOptions({
+          trip: state.trip,
+          prompt: state.prompt || '',
+          action: continuationAction,
+          candidate
+        });
+        await requestPlan(options);
+        return;
+      }
+    } catch (error) {
+      console.error(`[yuyouzhice] ${owner || '页面'}动作失败。`, error);
+      toast(owner === 'navigation' ? '页面切换暂时失败，请刷新后重试。' : (error.message || '操作暂时失败，请稍后重试。'));
+      return;
+    }
 
     if (action === 'quick-fill') {
       const email = target.dataset.email;
@@ -877,6 +1099,12 @@ if (app) {
       toast('已为您一键套用专属旅行偏好模版！');
     }
 
+    if (action === 'toggle-use-memories') {
+      state.useMemoriesInPlan = !state.useMemoriesInPlan;
+      renderView();
+      return;
+    }
+
     if (action === 'plan') await requestPlan();
     if (action === 'map-day') {
       state.selectedMapDay = Number(target.dataset.day || 0);
@@ -902,7 +1130,7 @@ if (app) {
       renderModals();
     }
     if (action === 'navigate-to') {
-      navigateTo(target.dataset.name, target.dataset.location);
+      navigateTo(target.dataset.name, target.dataset.location, target.dataset.fromName, target.dataset.fromLocation);
     }
 
     if (action === 'remove-stop') {
@@ -922,6 +1150,27 @@ if (app) {
         stopId: target.dataset.stopId || '',
         fromView: target.dataset.from || (state.view === 'explore' ? 'explore' : 'planning')
       });
+    }
+    if (action === 'dining-detail') {
+      const stopId = target.dataset.id;
+      const stop = state.trip?.days?.flatMap((d) => d.stops || []).find((s) => s.id === stopId);
+      if (stop) {
+        state.activeDiningStop = stop;
+        renderModals();
+      }
+    }
+    if (action === 'close-dining-modal') {
+      state.activeDiningStop = null;
+      renderModals();
+    }
+    if (action === 'quick-dining-replace') {
+      state.activeDiningStop = null;
+      renderModals();
+      const restaurantName = target.dataset.name || '当前餐厅';
+      const day = target.dataset.day || 1;
+      const prompt = `请帮我推荐第${day}天【${restaurantName}】周边的其他特色美食，我想换一家餐厅（例如地道九宫格火锅、特色江湖菜或清淡老字号）。`;
+      state.chatMode = 'planner';
+      await doSendChatMessage({ inputOverride: prompt });
     }
     if (action === 'add-attraction-custom') {
       const select = document.querySelector('#detail-day-select');
@@ -1015,9 +1264,17 @@ if (app) {
       await sendFeedback('letter', content);
     }
     if (action === 'health') await doHealth();
+    if (action === 'refresh-explore') await loadExplore({ force: true });
+    if (action === 'quick-search-amap') {
+      const q = document.querySelector('#explore-query')?.value || state.exploreQuery || '';
+      void searchAmapPois(q);
+    }
     if (action === 'explore-category') {
       state.exploreCategory = target.dataset.category || '';
       updateExploreGridInDOM();
+      if (state.exploreQuery && state.exploreQuery.trim()) {
+        void searchAmapPois(state.exploreQuery.trim());
+      }
     }
     if (action === 'explore-add-custom') {
       const daySelect = document.querySelector(`#explore-day-${target.dataset.id}`);
@@ -1066,6 +1323,26 @@ if (app) {
     if (action === 'export-pdf') await exportTripPdf(target.dataset.id);
     if (action === 'load-saved') await doOpenSavedTrip(target.dataset.id);
   });
+
+  document.addEventListener('change', (e) => {
+    const target = e.target.closest('[data-action="toggle-use-memories"]');
+    if (!target) return;
+    state.useMemoriesInPlan = target.checked;
+    renderView();
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      const activeEl = document.activeElement;
+      if (activeEl?.id === 'new-dining-tag-input') {
+        const btn = document.querySelector('[data-action="add-custom-slot-tag"][data-slot="dining"]');
+        if (btn) btn.click();
+      } else if (activeEl?.id === 'new-attraction-tag-input') {
+        const btn = document.querySelector('[data-action="add-custom-slot-tag"][data-slot="attraction"]');
+        if (btn) btn.click();
+      }
+    }
+  });
 }
 
 void bootstrapApplication({
@@ -1074,5 +1351,6 @@ void bootstrapApplication({
   render,
   scheduleDynamicRefresh,
   loadAdminHealth: doHealth,
+  prefetchPlannerContext,
   state
 });

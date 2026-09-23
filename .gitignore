@@ -13,3 +13,12 @@ src/**/*.js
 .env.*
 !.env.example
 .DS_Store
+
+# Local logs, generated outputs, runtime data, and databases.
+*.log
+outputs/
+work/
+data/
+*.db
+*.sqlite
+*.sqlite3

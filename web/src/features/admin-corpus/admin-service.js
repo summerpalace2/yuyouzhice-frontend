@@ -90,10 +90,11 @@ export async function health(renderCallback) {
   if (state.user?.role === 'admin') {
     // 概览、语料和 Rerank 互不依赖；并发读取可缩短首次进入控制中心的等待，
     // 而专用 Rerank 接口也避免通过概览聚合数据猜测统计来源。
-    const [overviewResult, documentsResult, rerankResult] = await Promise.allSettled([
+    const [overviewResult, documentsResult, rerankResult, intentShadowResult] = await Promise.allSettled([
       request('/api/admin/overview'),
       request('/api/admin/knowledge/documents'),
-      loadRerankStats()
+      loadRerankStats(),
+      loadIntentShadowStats()
     ]);
     const overviewLoaded = overviewResult.status === 'fulfilled' && overviewResult.value?.ok !== false;
     state.adminOverview = overviewLoaded ? overviewResult.value : null;
@@ -104,6 +105,7 @@ export async function health(renderCallback) {
       ? documentsResult.value.documents || null
       : null;
     if (rerankResult.status === 'rejected') state.adminRerankStats = null;
+    if (intentShadowResult.status === 'rejected') state.adminIntentShadowStats = null;
     if (overviewLoaded) markPageDataFresh('admin');
     else invalidatePageCache('admin');
   }
@@ -115,6 +117,19 @@ export async function loadRerankStats() {
   const response = await request('/api/admin/rerank/stats');
   state.adminRerankStats = response.stats || null;
   return state.adminRerankStats;
+}
+
+/** 只读取 LLM 意图旁路计数，不刷新管理页面其他分区。 */
+export async function loadIntentShadowStats() {
+  const response = await request('/api/admin/llm/intent/shadow');
+  state.adminIntentShadowStats = response.stats || null;
+  return state.adminIntentShadowStats;
+}
+
+/** 显式触发统一 planning-intent.v1 Tool Calling 探测；不会自动调用。 */
+export async function probeIntentCapability() {
+  const response = await request('/api/admin/llm/intent/planning-capability-probe', { method: 'POST' });
+  return response.result || null;
 }
 
 export async function clearRerankCache() {

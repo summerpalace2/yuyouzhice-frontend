@@ -41,6 +41,31 @@
       </div>
     </section>
 
+    <!-- LLM 意图协议观测 -->
+    <section class="admin-stream-section">
+      <div class="admin-stream-head">
+        <div class="head-with-meta">
+          <h3>LLM 意图识别 · Shadow 观测</h3>
+          <span class="head-meta-badge">旁路不影响用户结果</span>
+        </div>
+        <button class="secondary mini-btn" @click="runCapabilityProbe">手动探测协议</button>
+      </div>
+      <div class="panel panel-pad intent-observability-panel">
+        <div class="intent-observability-copy">
+          <strong>{{ shadowEnabled ? 'Shadow 已开启' : 'Shadow 当前关闭' }}</strong>
+          <span>新工具调用只做对比，不会直接修改行程；统计以当前 Java 进程为周期。</span>
+        </div>
+        <div class="intent-observability-grid">
+          <span>已提交 <b>{{ shadow?.submitted ?? '—' }}</b></span>
+          <span>已完成 <b>{{ shadow?.completed ?? '—' }}</b></span>
+          <span>匹配 <b>{{ shadow?.matched ?? '—' }}</b></span>
+          <span>不匹配 <b>{{ shadow?.mismatched ?? '—' }}</b></span>
+          <span>失败 <b>{{ shadow?.failed ?? '—' }}</b></span>
+          <span>最近结果 <b>{{ shadow?.lastOutcome || '—' }}</b></span>
+        </div>
+      </div>
+    </section>
+
     <!-- Rerank 多级缓存 -->
     <section class="admin-stream-section">
       <div class="admin-stream-head">
@@ -205,6 +230,8 @@ function selectTopic(t: string) {
 }
 
 const rerank = computed(() => adminStore.overview?.rerankCache);
+const shadow = computed(() => adminStore.intentShadow);
+const shadowEnabled = computed(() => shadow.value?.enabled === true);
 const corpusDocs = computed(() => adminStore.overview?.knowledge?.corpus?.documents ?? '—');
 const usersList = computed(() => adminStore.overview?.users || []);
 const sourcesList = computed(() => adminStore.overview?.knowledge?.sourceRegister || []);
@@ -226,6 +253,13 @@ const unknownFacts = computed(() => {
   if (!q || q.available === false) return '—';
   return `${q.unknownFacts || 0} 项`;
 });
+
+async function runCapabilityProbe() {
+  const result = await adminStore.probeIntentCapability();
+  if (result && typeof result === 'object') {
+    adminStore.fetchHealth();
+  }
+}
 
 const filteredDocs = computed(() => {
   const list = adminStore.docs || [];
@@ -404,6 +438,37 @@ const displayedDocs = computed(() => {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 20px;
+}
+
+.intent-observability-panel {
+  display: grid;
+  gap: 14px;
+}
+.intent-observability-copy {
+  display: grid;
+  gap: 4px;
+}
+.intent-observability-copy span {
+  color: var(--muted);
+  font-size: 12px;
+}
+.intent-observability-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 8px;
+}
+.intent-observability-grid span {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  font-size: 12px;
+}
+.intent-observability-grid b {
+  display: block;
+  margin-top: 4px;
+  color: var(--ink);
+  font-size: 16px;
 }
 
 .admin-user-row {

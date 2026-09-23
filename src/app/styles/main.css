@@ -202,3 +202,118 @@ button {
   display: flex;
   gap: 10px;
 }
+
+/* AMap Injected Marker & Popup Styles (Global) */
+.map-marker-pin {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  color: #ffffff;
+  font-size: 11.5px;
+  font-weight: 700;
+  border-radius: 14px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  white-space: nowrap;
+  position: relative;
+  transform: translateY(-4px);
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  user-select: none;
+  letter-spacing: 0.02em;
+}
+.map-marker-pin:hover {
+  transform: translateY(-7px) scale(1.05);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+  z-index: 100;
+}
+.map-marker-pin::after {
+  content: '';
+  position: absolute;
+  bottom: -5px;
+  left: 50%;
+  transform: translateX(-50%);
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-top: 5px solid rgba(0, 0, 0, 0.4);
+}
+.map-marker-start {
+  background: #1e293b !important;
+  border: 1.5px solid #ffffff;
+  box-shadow: 0 4px 14px rgba(30, 41, 59, 0.45);
+}
+.map-marker-user-location {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.user-marker-core {
+  background: #2563eb;
+  color: #ffffff;
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 12px;
+  border: 2px solid #ffffff;
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.45);
+  position: relative;
+  z-index: 2;
+  white-space: nowrap;
+}
+.user-pulse-ring {
+  position: absolute;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: rgba(37, 99, 235, 0.35);
+  animation: userPulse 2s infinite ease-out;
+  z-index: 1;
+}
+@keyframes userPulse {
+  0% { transform: scale(0.6); opacity: 0.85; }
+  100% { transform: scale(1.65); opacity: 0; }
+}
+
+.map-info-popup {
+  padding: 10px 14px;
+  max-width: 250px;
+  font-family: inherit;
+}
+.info-popup-meta {
+  font-size: 11px;
+  color: #64748b;
+  margin-bottom: 3px;
+  font-weight: 600;
+}
+.info-popup-title {
+  font-size: 14.5px;
+  font-weight: 800;
+  color: #0f172a;
+  margin-bottom: 5px;
+}
+.info-popup-desc {
+  font-size: 12px;
+  color: #475569;
+  line-height: 1.45;
+  margin: 0 0 8px;
+}
+.info-popup-chips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.info-chip {
+  font-size: 11px;
+  padding: 3px 7px;
+  border-radius: 4px;
+  font-weight: 600;
+}
+.info-chip.duration {
+  background: #f1f5f9;
+  color: #334155;
+}
+.info-chip.transit {
+  background: #eff6ff;
+  color: #2563eb;
+}

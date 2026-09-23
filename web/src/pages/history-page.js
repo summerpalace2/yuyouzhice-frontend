@@ -23,7 +23,10 @@ export function historyView() {
   }
 
   if (!state.historySessions) {
-    return `<main class="page shell"><div class="panel trip-empty"><p>正在读取历史规划会话……</p></div></main>`;
+    if (state.historyLoadError) {
+      return `<main class="page shell"><div class="panel trip-empty"><div><div class="empty-symbol">!</div><h2>历史会话暂时无法读取</h2><p class="muted">${escapeHtml(state.historyLoadError)}</p><button class="primary" data-action="refresh-history" ${state.historyLoading ? 'disabled' : ''}>${state.historyLoading ? '重新读取中…' : '重新读取会话'}</button></div></div></main>`;
+    }
+    return `<main class="page shell"><div class="panel trip-empty"><p>${state.historyLoading ? '正在读取历史规划会话……' : '准备读取历史规划会话……'}</p></div></main>`;
   }
 
   if (!state.historySessions.length) {
@@ -52,7 +55,7 @@ export function historyView() {
           <h2>历史会话</h2>
           <p>点击任意会话即可恢复并继续调整行程。</p>
         </div>
-        <button class="secondary" data-action="refresh-history">刷新会话</button>
+        <button class="secondary" data-action="refresh-history" ${state.historyLoading ? 'disabled' : ''}>${state.historyLoading ? '刷新中…' : '刷新会话'}</button>
       </div>
 
       <div class="notice history-sync">
@@ -79,15 +82,22 @@ export function historyView() {
 export async function loadHistory(renderViewCallback, { force = false } = {}) {
   if (!state.user) return;
   if (!force && Array.isArray(state.historySessions) && isPageDataFresh('history')) return state.historySessions;
+  if (state.historyLoading) return state.historySessions;
+  state.historyLoading = true;
+  state.historyLoadError = '';
+  if (state.view === 'history' && renderViewCallback) renderViewCallback();
   try {
-    const data = await request('/api/history');
+    const data = await request('/api/history', { timeoutMs: 15000 });
     state.historySessions = data.sessions || [];
     state.historySync = data.sync;
     markPageDataFresh('history');
-    if (state.view === 'history' && renderViewCallback) renderViewCallback();
     return state.historySessions;
   } catch (error) {
+    state.historyLoadError = error?.message || '无法读取历史会话，请稍后重试。';
     toast(error.message);
+  } finally {
+    state.historyLoading = false;
+    if (state.view === 'history' && renderViewCallback) renderViewCallback();
   }
 }
 
