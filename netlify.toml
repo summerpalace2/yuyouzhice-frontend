@@ -1,6 +1,6 @@
 [build]
   command = "npm run build"
-  publish = "dist"
+  publish = "web/dist"
 
 # Keep browser requests same-origin while the BFF remains responsible for
 # sessions, CSRF validation and Java Core orchestration.

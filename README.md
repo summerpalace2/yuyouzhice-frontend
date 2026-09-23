@@ -1,6 +1,6 @@
 # 渝游智策 Web 前端
 
-`web/` 是当前唯一的 Web UI 源码与 Netlify 发布目录。本地运行 `npm run dev` 与线上页面使用同一份原生 ESM 应用；浏览器请求保持为同源的 `/api/*` 和 `/images/*`，再由 Netlify 转发给 BFF。
+`web/` 是当前 Web UI 的权威源码；根目录 `src/` 还有一套 Vue SPA，但当前站点部署使用 `web/`。Netlify 和 Vercel 都运行 Vite 构建 `web/` 并发布 `web/dist/`，本地 `npm run dev` 也以 `web/` 为入口。浏览器请求保持为同源的 `/api/*` 和 `/images/*`，再由 Netlify 转发给 BFF。
 
 ## 高德地图配置
 
