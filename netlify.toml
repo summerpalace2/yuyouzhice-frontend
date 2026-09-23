@@ -1,8 +1,6 @@
 [build]
-  # The production site is the current static ESM application copied from
-  # ../app. It must be served as-is so the deployed UI stays identical to
-  # the locally verified UI rather than rebuilding the retired Vue snapshot.
-  publish = "web"
+  command = "npm run build"
+  publish = "dist"
 
 # Keep browser requests same-origin while the BFF remains responsible for
 # sessions, CSRF validation and Java Core orchestration.
