@@ -1,7 +1,8 @@
 <template>
   <article class="panel explore-card">
-    <div class="explore-card-thumb" :style="`background-image:url('/images/attractions/${item.id}.svg')`">
+    <div class="explore-card-thumb" :style="thumbStyle">
       <span class="explore-cat-badge">{{ item.category }}</span>
+      <span v-if="hasRealPhoto" class="explore-real-photo-badge">📷 高德实景</span>
     </div>
     <div class="explore-card-body">
       <div class="eyebrow">{{ item.district }} · {{ ticketBrief }}</div>
@@ -48,6 +49,19 @@ const emit = defineEmits<{
 
 const selectedDay = ref(1);
 const ticketBrief = computed(() => (props.item.ticket || '免费').split('·')[0].trim());
+
+const hasRealPhoto = computed(() => Boolean(props.item.image || props.item.photoUrl));
+const thumbStyle = computed(() => {
+  const photo = props.item.image || props.item.photoUrl;
+  if (photo) {
+    return {
+      backgroundImage: `url("${photo}")`
+    };
+  }
+  return {
+    backgroundImage: `url("/images/attractions/${props.item.id}.svg")`
+  };
+});
 </script>
 
 <style scoped>
@@ -81,6 +95,20 @@ const ticketBrief = computed(() => (props.item.ticket || '免费').split('·')[0
   font-size: 11px;
   font-weight: 700;
   backdrop-filter: blur(4px);
+}
+
+.explore-real-photo-badge {
+  position: absolute;
+  bottom: 10px;
+  right: 12px;
+  background: rgba(15, 23, 42, 0.75);
+  color: #f8fafc;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 10.5px;
+  font-weight: 600;
+  backdrop-filter: blur(4px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
 }
 
 .explore-card-body {

@@ -31,6 +31,10 @@ export function plannerIdempotencyKey(prefix = 'planner') {
 export async function request(path, options = {}) {
   const method = String(options.method || 'GET').toUpperCase();
   const isMultipart = typeof FormData !== 'undefined' && options.body instanceof FormData;
+  const timeoutMs = Number(options.timeoutMs || 0);
+  const callerSignal = options.signal;
+  const fetchOptions = { ...options };
+  delete fetchOptions.timeoutMs;
   const headers = {
     ...(isMultipart ? {} : { 'content-type': 'application/json' }),
     'x-yuyouzhice-device': deviceId(),
@@ -39,12 +43,31 @@ export async function request(path, options = {}) {
   if (state.csrfToken && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method) && !headers['x-yuyouzhice-csrf']) {
     headers['x-yuyouzhice-csrf'] = state.csrfToken;
   }
+  let timeoutController = null;
+  let timeoutId = null;
+  let removeCallerAbortListener = null;
+  if (timeoutMs > 0) {
+    timeoutController = new AbortController();
+    if (callerSignal) {
+      const abortFromCaller = () => timeoutController.abort();
+      if (callerSignal.aborted) abortFromCaller();
+      else {
+        callerSignal.addEventListener('abort', abortFromCaller, { once: true });
+        removeCallerAbortListener = () => callerSignal.removeEventListener('abort', abortFromCaller);
+      }
+    }
+    fetchOptions.signal = timeoutController.signal;
+    timeoutId = window.setTimeout(() => timeoutController.abort(), timeoutMs);
+  }
   let response;
   try {
-    response = await fetch(path, { ...options, credentials: 'same-origin', headers });
+    response = await fetch(path, { ...fetchOptions, credentials: 'same-origin', headers });
   } catch (netErr) {
     if (netErr?.name === 'AbortError') throw netErr;
     throw Object.assign(new Error('网络连接异常，请检查后端服务是否正常运行。'), { status: 0, cause: netErr });
+  } finally {
+    if (timeoutId) window.clearTimeout(timeoutId);
+    removeCallerAbortListener?.();
   }
   let data = {};
   try {

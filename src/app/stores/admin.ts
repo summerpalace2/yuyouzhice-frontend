@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
-import type { AdminOverview, KnowledgeDocument } from '@/shared/types/contracts';
+import type { AdminOverview, IntentShadowStats, KnowledgeDocument } from '@/shared/types/contracts';
 import { request } from '@/shared/api/client';
 import { useUiStore } from './ui';
 
@@ -9,6 +9,7 @@ export const useAdminStore = defineStore('admin', () => {
 
   const healthData = ref<any | null>(null);
   const overview = ref<AdminOverview | null>(null);
+  const intentShadow = ref<IntentShadowStats | null>(null);
   const docs = ref<KnowledgeDocument[]>([]);
   const docQuery = ref('');
   const docTopic = ref('');
@@ -30,8 +31,27 @@ export const useAdminStore = defineStore('admin', () => {
       } catch {
         docs.value = [];
       }
+      try {
+        const shadowData = await request<{ stats: { data?: IntentShadowStats } | IntentShadowStats }>('/api/admin/llm/intent/shadow');
+        const payload: any = shadowData.stats;
+        intentShadow.value = payload?.data || payload;
+      } catch {
+        intentShadow.value = null;
+      }
     } catch (err: any) {
       ui.showToast(err.message);
+    }
+  }
+
+  async function probeIntentCapability() {
+    try {
+      const response = await request<{ result: { data?: Record<string, unknown> } | Record<string, unknown> }>('/api/admin/llm/intent/capability-probe', { method: 'POST' });
+      const payload: any = response.result;
+      ui.showToast(String(payload?.data?.message || payload?.message || '协议探测已完成'));
+      return payload?.data || payload;
+    } catch (err: any) {
+      ui.showToast(err.message);
+      return null;
     }
   }
 
@@ -99,6 +119,7 @@ export const useAdminStore = defineStore('admin', () => {
   return {
     healthData,
     overview,
+    intentShadow,
     docs,
     docQuery,
     docTopic,
@@ -106,6 +127,7 @@ export const useAdminStore = defineStore('admin', () => {
     expandedDocs,
     editingDoc,
     fetchHealth,
+    probeIntentCapability,
     saveDoc,
     toggleUserRole,
     resetUserData,

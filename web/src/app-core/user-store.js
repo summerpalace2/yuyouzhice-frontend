@@ -10,25 +10,45 @@
 
 const PREFIX_PLAN = 'yuyouzhice_active_plan_';
 const PREFIX_CHATS = 'yuyouzhice_chat_histories_';
-const GUEST_CHAT_SESSION_STORAGE_KEY = 'yuyouzhice_guest_chat_session_v1';
 
 /**
- * 游客聊天仅属于当前浏览器，不复用用户账号、规划草稿或其他游客的会话。
- * 该 ID 同时作为浏览器本地聊天记录键和 Java Chat 的匿名会话标识。
+ * 游客会话只在当前页面生命周期内有效。重新打开网站或重新进入游客页时
+ * 必须换新 ID，避免复用浏览器持久化记录和 Java/Redis 中的旧对话上下文。
  */
+function createGuestChatSessionId() {
+  const cryptoApi = globalThis.crypto || globalThis.window?.crypto;
+  const suffix = typeof cryptoApi?.randomUUID === 'function'
+    ? cryptoApi.randomUUID()
+    : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+  return `guest-chat-${suffix}`.slice(0, 128);
+}
+
+let activeGuestChatSessionId = createGuestChatSessionId();
+
 export function getGuestChatSessionId() {
+  return activeGuestChatSessionId;
+}
+
+export function startGuestChatSession() {
+  activeGuestChatSessionId = createGuestChatSessionId();
+  return activeGuestChatSessionId;
+}
+
+const PREFIX_GUEST_MEMORIES = 'yuyouzhice_guest_memories';
+
+export function loadGuestMemories() {
   try {
-    const existing = String(window.localStorage.getItem(GUEST_CHAT_SESSION_STORAGE_KEY) || '').trim();
-    if (/^guest-chat-[a-z0-9-]{16,128}$/i.test(existing)) return existing;
-    const suffix = typeof window.crypto?.randomUUID === 'function'
-      ? window.crypto.randomUUID()
-      : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
-    const sessionId = `guest-chat-${suffix}`.slice(0, 128);
-    window.localStorage.setItem(GUEST_CHAT_SESSION_STORAGE_KEY, sessionId);
-    return sessionId;
+    const raw = window.localStorage?.getItem(PREFIX_GUEST_MEMORIES);
+    return raw ? JSON.parse(raw) : [];
   } catch {
-    return `guest-chat-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+    return [];
   }
+}
+
+export function saveGuestMemories(memories) {
+  try {
+    window.localStorage?.setItem(PREFIX_GUEST_MEMORIES, JSON.stringify(memories || []));
+  } catch {}
 }
 
 function getUserKey(userId) {

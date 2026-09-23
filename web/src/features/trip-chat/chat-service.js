@@ -35,20 +35,22 @@ function persistConversationUiState() {
 }
 
 async function queueTravelMemoryObservation(message) {
-  if (!state.user || state.view === 'planning' && state.chatMode === 'planner') return;
+  const text = String(message || '').trim();
+  if (!text || text.length < 2) return;
   try {
-    await request('/api/memories/observe', { method: 'POST', body: JSON.stringify({ message, sessionId: state.chatSessionId || '' }) });
-    const result = await request('/api/memories/candidates');
-    state.memoryCandidate = Array.isArray(result.candidates) ? result.candidates[0] || null : null;
+    if (state.user) {
+      void request('/api/memories/observe', { method: 'POST', body: JSON.stringify({ message: text, sessionId: state.chatSessionId || '' }) }).catch(() => {});
+    }
   } catch {
     // Background memory review is auxiliary and must never make chat fail.
   }
 }
 
 export function cancelChatMessage({ renderView } = {}) {
-  if (!activeChatAbortController) return;
-  activeChatAbortController.abort();
-  activeChatAbortController = null;
+  if (activeChatAbortController) {
+    activeChatAbortController.abort();
+    activeChatAbortController = null;
+  }
   state.chatLoading = false;
   const latest = state.chatMessages.at(-1);
   if (latest?.role === 'assistant' && latest.pending) {
@@ -201,7 +203,79 @@ function classifyChatFailure(error) {
   return { kind: 'temporary', message: '我刚才没有拿到完整回答。你可以稍后重试，也可以换个更具体的问法。' };
 }
 
-export async function sendChatMessage({ renderView, scheduleTripMap, inputOverride, preserveInput = false } = {}) {
+/**
+ * 从大模型回答文本中解析 <action_chip ... /> 标签，
+ * 并返回清洗后的纯正文文本与结构化卡片数组。
+ */
+export function extractActionChips(rawContent) {
+  if (!rawContent || typeof rawContent !== 'string') {
+    return { cleanContent: '', chips: [] };
+  }
+  const chips = [];
+  const tagRegex = /<action_chip(?:\s+|(?=[a-zA-Z_-]))([^>]+?)\s*\/?>/gi;
+  let match;
+  while ((match = tagRegex.exec(rawContent)) !== null) {
+    const attrStr = match[1];
+    const attrs = {};
+    const attrRegex = /([a-zA-Z_-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/g;
+    let attrMatch;
+    while ((attrMatch = attrRegex.exec(attrStr)) !== null) {
+      const key = attrMatch[1];
+      const val = attrMatch[2] ?? attrMatch[3] ?? attrMatch[4] ?? '';
+      attrs[key] = val;
+    }
+    if (attrs.action && attrs.label) {
+      chips.push({
+        action: attrs.action,
+        icon: attrs.icon || '✦',
+        label: attrs.label,
+        payload: attrs.payload || attrs.label
+      });
+    }
+  }
+
+  // 清洗正文中的标签，并剔除末尾可能残缺的流式标签前缀（如 "<action_chip"）
+  let cleanContent = rawContent.replace(tagRegex, '');
+  cleanContent = cleanContent.replace(/<action_chip(?:\s+|(?=[a-zA-Z_-]))?[^>]*$/i, '');
+  cleanContent = cleanContent.trimEnd();
+
+  return { cleanContent, chips };
+}
+
+/**
+ * 对行动建议卡片进行语义去重与数量控制：
+ * 1. 同一行动类型（如 add_stop, save_memory, replace_stop 等）全局最多保留 1 个最精准的卡片；
+ * 2. 标签文本唯一（剔除括号补充说明如 "(20分钟)"、空白等）；
+ * 3. 总体卡片数量严格限制在 2~3 个以内，彻底杜绝重复。
+ */
+export function deduplicateSuggestions(chips) {
+  if (!Array.isArray(chips) || chips.length === 0) return [];
+  const seenActions = new Set();
+  const seenLabels = new Set();
+  const result = [];
+  for (const chip of chips) {
+    if (!chip || !chip.action || !chip.label) continue;
+    const actionKey = String(chip.action).trim().toLowerCase();
+    const normLabel = String(chip.label).trim().replace(/[（(].*?[）)]/g, '').replace(/\s+/g, '');
+    if (seenActions.has(actionKey)) continue;
+    if (seenLabels.has(normLabel)) continue;
+
+    seenActions.add(actionKey);
+    seenLabels.add(normLabel);
+    result.push(chip);
+    if (result.length >= 3) break;
+  }
+  return result;
+}
+
+export async function sendChatMessage(options = {}, maybePreserveInput = false) {
+  let opts = options;
+  if (typeof options === 'string') {
+    opts = { inputOverride: options, preserveInput: maybePreserveInput === true };
+  } else if (opts?.inputOverride && typeof opts.inputOverride === 'object') {
+    opts = { ...opts, ...opts.inputOverride };
+  }
+  const { renderView, scheduleTripMap, inputOverride, preserveInput = false } = opts || {};
   const inputEl = document.querySelector('#chat-input');
   const hasInputOverride = typeof inputOverride === 'string';
   const input = String(hasInputOverride ? inputOverride : ((inputEl ? inputEl.value : state.chatInput) || state.chatInput || '')).trim();
@@ -228,7 +302,7 @@ export async function sendChatMessage({ renderView, scheduleTripMap, inputOverri
     : (state.chatSessionId || getTripChatKey(state.savedTripId, state.sessionId));
   state.chatSessionId = tripChatKey;
   state.chatMessages.push({ role: 'user', content: input });
-  const assistant = { role: 'assistant', content: '', pending: true, retryMessage: input };
+  const assistant = { role: 'assistant', content: '', rawContent: '', pending: true, retryMessage: input };
   state.chatMessages.push(assistant);
   if (!hasInputOverride || !preserveInput) {
     state.chatInput = '';
@@ -238,6 +312,7 @@ export async function sendChatMessage({ renderView, scheduleTripMap, inputOverri
   state.tripChatHistories = state.tripChatHistories || {};
   state.tripChatHistories[tripChatKey] = state.chatMessages;
   persistChatUiState();
+  void queueTravelMemoryObservation(input);
   activeChatAbortController?.abort();
   activeChatAbortController = new AbortController();
   state.chatLoading = true;
@@ -248,6 +323,9 @@ export async function sendChatMessage({ renderView, scheduleTripMap, inputOverri
 
   // 1. 详情页规划微调会话通道：全量自然语言统一路由至服务端语义处理入口，不再通过前端关键词正则拦截
   if (usePlannerChannel) {
+    if (!state.sessionId) {
+      state.sessionId = state.savedTripId || state.trip?.id || null;
+    }
     if (!state.sessionId) {
       assistant.content = '当前行程的局部调整会话已失效。请从“我的行程”重新打开这份行程后再调整；也可以切换到聊天继续咨询。';
       assistant.error = '当前行程暂时无法进入局部调整';
@@ -312,15 +390,21 @@ export async function sendChatMessage({ renderView, scheduleTripMap, inputOverri
       state.legacyMode = false;
       state.adjustmentCapability = convRes.adjustmentCapability || 'V1_PROPOSAL';
 
-      // QA 问答类型响应
+      // QA 问答类型响应（如果 planner 给出的只是一句泛化的兜底回复，且并未命中具体景点，也应平滑进入流式大模型深层回答）
       if (convRes.type === 'PLACE_QUESTION' || convRes.operation === 'QA') {
-        assistant.content = String(convRes.answer || convRes.message || '').trim()
-          || chatUnknownReply(activeStopName);
-        assistant.pending = false;
-        state.chatLoading = false;
-        persistConversationUiState();
-        renderChatInDOM({ scrollToBottom: true }, renderView);
-        return;
+        const answer = String(convRes.answer || convRes.message || '').trim();
+        const isGenericFallback = !answer
+          || answer.includes('关于重庆旅游景点，您可以随时在行程中点击卡片提问')
+          || answer.includes('暂时没有从高德核验到该景点的详情')
+          || answer.includes('高德暂时没有找到');
+        if (!isGenericFallback) {
+          assistant.content = answer;
+          assistant.pending = false;
+          state.chatLoading = false;
+          persistConversationUiState();
+          renderChatInDOM({ scrollToBottom: true }, renderView);
+          return;
+        }
       }
 
       // 仅变更选项选中态，不直接修改行程
@@ -342,8 +426,9 @@ export async function sendChatMessage({ renderView, scheduleTripMap, inputOverri
         return;
       }
 
-      // 单轮精准澄清响应
-      if (convRes.requiresClarification || convRes.type === 'CLARIFICATION' || convRes.type === 'UNKNOWN') {
+      // 单轮精准澄清响应（仅针对明确的排程调整意图，如加景点缺少地点等）
+      const isUnknownIntent = convRes.type === 'UNKNOWN' || convRes.operation === 'UNKNOWN';
+      if (!isUnknownIntent && (convRes.requiresClarification || convRes.type === 'CLARIFICATION')) {
         assistant.content = convRes.clarificationQuestion || convRes.message || '请补充具体景点信息。';
         assistant.pending = false;
         state.chatLoading = false;
@@ -393,14 +478,16 @@ export async function sendChatMessage({ renderView, scheduleTripMap, inputOverri
         return;
       }
 
-      // Planner 返回了未带 Proposal 的正常结果时也在规划通道内收口，
-      // 不再继续落入普通聊天流，避免出现“后端模型未返回内容”。
-      assistant.content = convRes.answer || convRes.message || '规划请求已收到，请补充具体的景点或调整目标。';
-      assistant.pending = false;
-      state.chatLoading = false;
-      persistConversationUiState();
-      renderChatInDOM({ scrollToBottom: true }, renderView);
-      return;
+      // 如果是非排程调整操作（如泛化的景点推荐咨询、闲聊或通用问答），
+      // 不在规划通道内硬性拦截，而是平滑穿透并流转入下方的通用流式问答通道 (readChatStream)。
+      if (!isUnknownIntent) {
+        assistant.content = convRes.answer || convRes.message || '规划请求已收到，请补充具体的景点或调整目标。';
+        assistant.pending = false;
+        state.chatLoading = false;
+        persistConversationUiState();
+        renderChatInDOM({ scrollToBottom: true }, renderView);
+        return;
+      }
     } catch (err) {
       const sessionUnavailable = err?.status === 404
         && (err.data?.code === 'PLANNER_SESSION_NOT_FOUND' || err.data?.recoverable === true);
@@ -486,10 +573,27 @@ export async function sendChatMessage({ renderView, scheduleTripMap, inputOverri
       activeStopId: activeStop?.id || '',
       activeStopName: activeStop?.name || ''
     }, (eventName, raw) => {
-      if (eventName === 'meta') {
+      if (eventName === 'progress') {
+        let progress = raw;
+        try {
+          const parsed = JSON.parse(raw);
+          progress = parsed?.message || raw;
+          assistant.progressStage = parsed?.stage || '';
+        } catch {}
+        assistant.progress = String(progress || '正在处理请求');
+        renderChatInDOM({ scrollToBottom: false }, renderView);
+      } else if (eventName === 'meta') {
         try {
           state.chatMeta = JSON.parse(raw);
           assistantMeta = state.chatMeta?.assistant || null;
+          const suggestions = state.chatMeta?.actionableSuggestions || state.chatMeta?.assistant?.actionableSuggestions;
+          if (Array.isArray(suggestions) && suggestions.length > 0) {
+            assistant.actionableSuggestions = deduplicateSuggestions(suggestions);
+          }
+          const pref = state.chatMeta?.detectedPreference || state.chatMeta?.assistant?.detectedPreference;
+          if (pref) {
+            assistant.detectedPreference = pref;
+          }
         } catch {
           state.chatMeta = { retrieval: { reason: raw } };
         }
@@ -500,7 +604,13 @@ export async function sendChatMessage({ renderView, scheduleTripMap, inputOverri
           const parsed = JSON.parse(raw);
           if (typeof parsed === 'string') text = parsed;
         } catch {}
-        assistant.content += text;
+        assistant.rawContent = (assistant.rawContent || '') + text;
+        const { cleanContent, chips } = extractActionChips(assistant.rawContent);
+        assistant.content = cleanContent;
+        if (chips.length > 0) {
+          const merged = [...(assistant.actionableSuggestions || []), ...chips];
+          assistant.actionableSuggestions = deduplicateSuggestions(merged);
+        }
         assistant.pending = true;
 
         const transcript = document.querySelector('.chat-panel .chat-transcript');
@@ -553,28 +663,50 @@ export async function sendChatMessage({ renderView, scheduleTripMap, inputOverri
     assistant.pending = false;
     activeChatAbortController = null;
     state.chatLoading = false;
+    if (assistant.rawContent) {
+      const { cleanContent, chips } = extractActionChips(assistant.rawContent);
+      assistant.content = cleanContent;
+      if (chips.length > 0) {
+        const merged = [...(assistant.actionableSuggestions || []), ...chips];
+        assistant.actionableSuggestions = deduplicateSuggestions(merged);
+      }
+    }
     if (!assistant.content.trim() && !assistant.error) {
       assistant.content = chatUnknownReply(activeStopName);
     }
-    if (!assistant.error && !assistant.pending) await queueTravelMemoryObservation(input);
+    if (assistant.actionableSuggestions?.some((s) => s.action === 'save_memory')) {
+      state.memoryCandidate = null;
+    } else if (!assistant.error && !assistant.pending) {
+      await queueTravelMemoryObservation(input);
+    }
     persistChatUiState();
     renderChatInDOM({ scrollToBottom: true }, renderView);
     window.setTimeout(() => document.querySelector('#chat-input')?.focus(), 0);
   }
 }
 
-export async function applyPlannerProposal({ renderView, scheduleTripMap } = {}) {
+export async function applyPlannerProposal({ renderView, scheduleTripMap, renderChatInDOM: passedRenderChatInDOM } = {}) {
+  const chatRender = passedRenderChatInDOM || renderChatInDOM;
+  const safeRenderChat = (opts, rv) => {
+    if (typeof chatRender === 'function') {
+      try {
+        chatRender(opts, rv);
+      } catch (e) {
+        console.warn('[chat-service] safeRenderChat failed:', e);
+      }
+    }
+  };
   if (!state.activeProposal) return;
   if (state.legacyMode || state.adjustmentCapability === 'LEGACY') {
     state.activeProposal = null;
     toast('当前保存行程处于 Legacy 模式，不支持新版 AI 局部调整。');
-    renderChatInDOM({ scrollToBottom: false }, renderView);
+    safeRenderChat({ scrollToBottom: false }, renderView);
     return;
   }
   const baseRevision = Number(state.activeProposal.baseRevision || state.trip?.version || 1);
   const expectedVersion = baseRevision + 1;
   state.chatLoading = true;
-  renderChatInDOM({ scrollToBottom: false }, renderView);
+  safeRenderChat({ scrollToBottom: false }, renderView);
   try {
     const res = await request('/api/planner/adjust/apply', {
       method: 'POST',
@@ -596,6 +728,20 @@ export async function applyPlannerProposal({ renderView, scheduleTripMap } = {})
     state.activeProposal = null;
     state.plannerProposalDockOpen = false;
     state.selectedStopId = null;
+    if (state.selectedStopIds instanceof Set) state.selectedStopIds.clear();
+    if (typeof document !== 'undefined') {
+      document.querySelectorAll('.stop').forEach((element) => {
+        element.classList.remove('selected-stop-card');
+        const button = element.querySelector('[data-action="select-stop"], [data-action="clear-selected-stop"]');
+        if (button) {
+          button.classList.remove('active-btn');
+          button.dataset.action = 'select-stop';
+          const isDining = element.classList.contains('dining-stop-card');
+          button.textContent = isDining ? '选中此餐' : '选中此站';
+        }
+        element.querySelector('.chip-selected')?.remove();
+      });
+    }
     state.suggestionDismissed = false;
     state.plannerVersion = res.plannerVersion || state.trip?.plannerVersion || state.plannerVersion;
     saveUserPlan(state.user?.id, {
@@ -608,6 +754,7 @@ export async function applyPlannerProposal({ renderView, scheduleTripMap } = {})
     toast(`已成功应用调整！当前为第 ${currentVersion} 版`);
     if (renderView) renderView();
     if (scheduleTripMap) scheduleTripMap();
+    safeRenderChat({ scrollToBottom: false }, renderView);
   } catch (error) {
     const expired = error.status === 400 && /过期|不存在|expired/i.test(`${error.message || ''} ${error.data?.code || ''}`);
     const sessionUnavailable = error?.status === 404
@@ -627,7 +774,7 @@ export async function applyPlannerProposal({ renderView, scheduleTripMap } = {})
         view: 'planning'
       });
       toast(message);
-      renderChatInDOM({ scrollToBottom: false }, renderView);
+      safeRenderChat({ scrollToBottom: false }, renderView);
     } else if (error.status === 409) {
       toast('行程版本已在其他操作中更新（409 Conflict），正在重新加载最新行程...');
       state.activeProposal = null;
@@ -644,12 +791,12 @@ export async function applyPlannerProposal({ renderView, scheduleTripMap } = {})
       state.activeProposal = null;
       state.selectedOptionId = 'option-1';
       toast('调整方案已过期，请重新发送调整要求生成新的预览。');
-      renderChatInDOM({ scrollToBottom: false }, renderView);
+      safeRenderChat({ scrollToBottom: false }, renderView);
     } else {
       toast(error?.status === 401 ? '行程规划需要登录，请先登录后再试。' : '这次方案暂时没有应用成功，请重新生成预览后再试。');
     }
   } finally {
     state.chatLoading = false;
-    renderChatInDOM({ scrollToBottom: false }, renderView);
+    safeRenderChat({ scrollToBottom: false }, renderView);
   }
 }

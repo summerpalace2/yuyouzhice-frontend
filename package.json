@@ -4,9 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite web",
+    "dev": "vite --config vite.config.ts web",
     "build": "node --check web/app.js",
-    "preview": "vite web --host 0.0.0.0"
+    "preview": "vite --config vite.config.ts web --host 0.0.0.0"
   },
   "dependencies": {
     "pinia": "^2.3.1",

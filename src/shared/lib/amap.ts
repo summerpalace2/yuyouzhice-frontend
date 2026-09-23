@@ -56,24 +56,71 @@ export function loadAmapSdk(): Promise<any> {
   return amapSdkPromise;
 }
 
-export function mapPoints(trip?: TripPlan | null, dayFilter = 0) {
-  if (!trip?.days) return [];
-  const days = dayFilter > 0 ? trip.days.filter((d) => d.day === dayFilter) : trip.days;
-  return days.flatMap((day) =>
-    (day.stops || []).map((stop, idx) => ({
-      stop,
-      day: day.day,
-      dayIndex: idx + 1,
-      color: DAY_COLORS[(day.day - 1) % DAY_COLORS.length],
-      coordinates: stop.mapContext?.coordinates
-    }))
-  ).filter((item) => Array.isArray(item.coordinates) && item.coordinates.length === 2 && item.coordinates.every(Number.isFinite));
+export interface MapPoint {
+  stop?: TripPlan['days'][number]['stops'][number];
+  label: string;
+  day: number;
+  dayIndex: number;
+  color: string;
+  coordinates: [number, number];
+  isStart?: boolean;
 }
 
-export function mapPath(polyline: Array<string | [number, number]> = []) {
-  return polyline
+function parseCoordinates(value: unknown): [number, number] | null {
+  if (Array.isArray(value) && value.length === 2 && value.every((item) => Number.isFinite(Number(item)))) {
+    return [Number(value[0]), Number(value[1])];
+  }
+  if (typeof value === 'string') {
+    const parts = value.split(',').map(Number);
+    if (parts.length === 2 && parts.every(Number.isFinite)) return [parts[0], parts[1]];
+  }
+  return null;
+}
+
+export function mapPoints(trip?: TripPlan | null, dayFilter = 0): MapPoint[] {
+  if (!trip?.days) return [];
+  const days = dayFilter > 0 ? trip.days.filter((d) => d.day === dayFilter) : trip.days;
+  const stopPoints = days.flatMap((day) =>
+    (day.stops || []).map((stop: any, idx): MapPoint | null => {
+      const coordinates = stop.mapContext?.coordinates
+        || (stop.mapContext?.coordinate ? parseCoordinates(stop.mapContext.coordinate) : null)
+        || parseCoordinates(stop.mapContext?.location || stop.location);
+      return coordinates ? {
+        stop,
+        label: stop.name,
+        day: day.day,
+        dayIndex: idx + 1,
+        color: DAY_COLORS[(day.day - 1) % DAY_COLORS.length],
+        coordinates
+      } : null;
+    })
+  ).filter((item): item is MapPoint => Boolean(item));
+
+  const startCoordStr = trip.planContext?.startLocation || (trip as any).spatialPlan?.resolvedStartCoordinate;
+  const startLocation = parseCoordinates(startCoordStr);
+  if (!startLocation || (dayFilter > 1 && dayFilter !== 0)) return stopPoints;
+
+  const startLabel = trip.planContext?.startPlace || trip.planContext?.startingArea || (trip as any).spatialPlan?.startAnchorName || '规划起点';
+  return [{
+    label: startLabel,
+    day: 0,
+    dayIndex: 0,
+    color: '#1f2937',
+    coordinates: startLocation,
+    isStart: true
+  }, ...stopPoints];
+}
+
+export function mapPath(polyline: Array<string | [number, number]> | string = []): [number, number][] {
+  if (typeof polyline === 'string') {
+    return polyline
+      .split(';')
+      .map((pt) => pt.split(',').map(Number))
+      .filter((point) => point.length === 2 && point.every(Number.isFinite)) as [number, number][];
+  }
+  return (polyline || [])
     .map((val) => (typeof val === 'string' ? val.split(',').map(Number) : val))
-    .filter((point) => point.length === 2 && point.every(Number.isFinite));
+    .filter((point) => point.length === 2 && point.every(Number.isFinite)) as [number, number][];
 }
 
 export function navigateTo(name: string, location = '') {
@@ -158,27 +205,33 @@ export function useAmap(containerRef: Ref<HTMLElement | null>) {
       }
 
       // Stop markers
-      points.forEach(({ stop, day, dayIndex, color, coordinates }) => {
+      points.forEach(({ stop, label, day, dayIndex, color, coordinates, isStart }) => {
         const marker = new AMap.Marker({
           position: coordinates,
-          title: `第${day}天 · ${stop.name}`,
+          title: isStart ? `规划起点 · ${label}` : `第${day}天 · ${label}`,
           content: `
-            <div class="map-marker-pin" style="background:${color};">
-              D${day}-${dayIndex} ${escapeHtml(stop.name)}
+            <div class="map-marker-pin ${isStart ? 'map-marker-start' : ''}" style="background:${color};">
+              ${isStart ? '起点' : `D${day}-${dayIndex}`} ${escapeHtml(label)}
             </div>
           `,
           anchor: 'bottom-center'
         });
 
         marker.on('click', () => {
-          const infoHtml = `
+          const infoHtml = isStart ? `
             <div class="map-info-popup">
-              <div class="info-popup-meta">第 ${day} 天 · 第 ${dayIndex} 站 · ${escapeHtml(stop.district)}</div>
-              <div class="info-popup-title">${escapeHtml(stop.name)}</div>
-              <p class="info-popup-desc">${escapeHtml(stop.summary || '')}</p>
+              <div class="info-popup-meta">本次限定位置规划起点</div>
+              <div class="info-popup-title">${escapeHtml(label)}</div>
+              <p class="info-popup-desc">高德路线从此处开始计算。</p>
+            </div>
+          ` : `
+            <div class="map-info-popup">
+              <div class="info-popup-meta">第 ${day} 天 · 第 ${dayIndex} 站 · ${escapeHtml(stop?.district || '')}</div>
+              <div class="info-popup-title">${escapeHtml(stop?.name || label)}</div>
+              <p class="info-popup-desc">${escapeHtml(stop?.summary || '')}</p>
               <div class="info-popup-chips">
-                <span class="info-chip duration">游玩 ${escapeHtml(stop.duration || '约90分钟')}</span>
-                <span class="info-chip transit">${escapeHtml(stop.walk || '路线就绪')}</span>
+                <span class="info-chip duration">游玩 ${escapeHtml(stop?.duration || '约90分钟')}</span>
+                <span class="info-chip transit">${escapeHtml(stop?.walk || '路线就绪')}</span>
               </div>
             </div>
           `;
@@ -193,8 +246,9 @@ export function useAmap(containerRef: Ref<HTMLElement | null>) {
       // Routes Polylines
       const targetDays = dayFilter > 0 ? trip.days.filter((d) => d.day === dayFilter) : trip.days;
       targetDays.forEach((day) => {
-        (day.stops || []).forEach((stop) => {
-          const polyline = mapPath(stop.mapContext?.polyline || []);
+        (day.stops || []).forEach((stop: any) => {
+          const rawPolyline = stop.routeFromPrevious?.polyline || stop.walkingInfo?.polyline || stop.mapContext?.polyline;
+          const polyline = mapPath(rawPolyline || []);
           if (polyline.length > 1) {
             const line = new AMap.Polyline({
               path: polyline,
@@ -212,7 +266,9 @@ export function useAmap(containerRef: Ref<HTMLElement | null>) {
 
       overlays.value = currentOverlays;
       if (currentOverlays.length) {
-        mapInstance.value.setFitView(currentOverlays, false, [36, 36, 36, 36]);
+        mapInstance.value.setFitView(currentOverlays, false, [40, 40, 40, 40]);
+      } else if (points.length > 0) {
+        mapInstance.value.setCenter(points[0].coordinates);
       }
       mapInstance.value.resize();
     } catch (err) {

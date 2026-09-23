@@ -18,7 +18,10 @@ export function tripsView() {
   }
 
   if (state.savedTrips === null) {
-    return `<main class="page shell"><div class="panel trip-empty"><p>正在读取您的行程……</p></div></main>`;
+    if (state.tripsLoadError) {
+      return `<main class="page shell"><div class="panel trip-empty"><div><div class="empty-symbol">!</div><h2>行程暂时无法读取</h2><p class="muted">${escapeHtml(state.tripsLoadError)}</p><button class="primary" data-action="refresh-trips" ${state.tripsLoading ? 'disabled' : ''}>${state.tripsLoading ? '重新读取中…' : '重新读取行程'}</button></div></div></main>`;
+    }
+    return `<main class="page shell"><div class="panel trip-empty"><p>${state.tripsLoading ? '正在读取您的行程……' : '准备读取您的行程……'}</p></div></main>`;
   }
 
   if (!state.savedTrips.length) {
@@ -44,7 +47,7 @@ export function tripsView() {
           <h2>我的行程</h2>
           <p>已保存 ${state.savedTrips.length} 份精彩重庆行程方案。</p>
         </div>
-        <button class="secondary" data-action="refresh-trips">刷新行程</button>
+        <button class="secondary" data-action="refresh-trips" ${state.tripsLoading ? 'disabled' : ''}>${state.tripsLoading ? '刷新中…' : '刷新行程'}</button>
       </div>
       <div data-saved-trip-list>
       ${state.savedTrips.map((item) => `
@@ -55,7 +58,7 @@ export function tripsView() {
             <p>${escapeHtml(item.trip.subtitle)} · 第 ${item.trip.version} 版 · 共 ${item.trip.days?.length || 2} 天</p>
           </div>
           <div class="trip-actions">
-            <button class="secondary" data-action="load-saved" data-id="${escapeHtml(item.id)}">打开行程</button>
+            <button class="secondary" data-action="load-saved" data-id="${escapeHtml(item.id)}" ${state.openingTripId === String(item.id) ? 'disabled' : ''}>${state.openingTripId === String(item.id) ? '打开中…' : '打开行程'}</button>
             <button class="secondary" data-action="export-pdf" data-id="${escapeHtml(item.id)}">导出 PDF</button>
             <button class="danger" data-action="delete-saved" data-id="${escapeHtml(item.id)}">删除</button>
           </div>

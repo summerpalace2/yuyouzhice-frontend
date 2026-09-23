@@ -6,6 +6,7 @@ import { deleteModal } from '../../features/trip-save/delete-modal.js';
 import { fullscreenMapOverlay } from '../trip-map/map-overlay.js';
 import { renderFullscreenMap } from '../trip-map/map-renderer.js';
 import { adminOverlays } from '../../pages/admin-page.js';
+import { diningModal } from './dining-modal.js';
 
 let fullscreenMapRenderTimer = null;
 
@@ -79,6 +80,7 @@ export function renderModals() {
     ${preferenceModal()}
     ${deleteModal()}
     ${feedbackModal()}
+    ${diningModal()}
     ${adminOverlays()}
     ${fullscreenMapOverlay()}
   `;

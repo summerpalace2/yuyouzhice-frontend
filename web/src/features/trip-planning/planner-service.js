@@ -5,6 +5,7 @@ import { saveUserPlan, saveUserChats, loadUserChats, getTripChatKey } from '../.
 import { invalidatePageCache } from '../../app-core/page-cache.js';
 
 export async function plan({
+  prompt = null,
   constraints = {},
   usePreferences = false,
   preferenceDecision = '',
@@ -29,7 +30,11 @@ export async function plan({
     state.savedTripId = null;
     state.itineraryMemorySnapshot = null;
   }
-  state.prompt = document.querySelector('#prompt-input')?.value || state.prompt;
+  const submittedPrompt = typeof prompt === 'string'
+    ? prompt
+    : (document.querySelector('#prompt-input')?.value ?? state.prompt);
+  state.prompt = submittedPrompt;
+  state.planRequestError = null;
   state.loading = true;
   state.loadingPhase = '理解旅行条件';
   state.view = 'planning';
@@ -50,8 +55,8 @@ export async function plan({
     const data = await request('/api/plan', {
       method: 'POST',
       body: JSON.stringify({
-        prompt: state.prompt,
-        freeText: state.prompt,
+        prompt: submittedPrompt,
+        freeText: submittedPrompt,
         constraints,
         usePreferences,
         preferenceDecision
@@ -100,6 +105,11 @@ export async function plan({
 
     toast(usePreferences ? '已沿用长期偏好生成定制行程。' : '专属行程已生成！支持地图分天切换与自由微调。');
   } catch (error) {
+    // If a new request fails, keep the previous draft but label it as stale;
+    // otherwise the unchanged itinerary can look like a successful new result.
+    state.planRequestError = state.trip
+      ? { message: error.message || '新规划请求暂时未完成。', prompt: submittedPrompt }
+      : null;
     if (!state.trip) state.view = 'home';
     toast(error.message);
   } finally {
@@ -113,7 +123,7 @@ export async function plan({
 
 /** Refreshes volatile provider data without changing the itinerary revision. */
 export async function refreshDynamicData({ render, renderDynamic, scheduleTripMap, silent = false } = {}) {
-  if (!state.user || !state.trip || !state.sessionId || state.dynamicRefreshing) return false;
+  if (!state.trip || !state.sessionId || state.dynamicRefreshing) return false;
   state.dynamicRefreshing = true;
   if (renderDynamic) renderDynamic();
   try {

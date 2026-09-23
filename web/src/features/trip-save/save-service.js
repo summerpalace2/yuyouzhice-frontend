@@ -7,12 +7,15 @@ import { invalidatePageCache, isPageDataFresh, markPageDataFresh } from '../../a
 
 export async function saveTrip({ renderModals, renderHeader, renderView, loadTripsCallback } = {}) {
   if (!state.trip) return toast('还没有可保存的行程。');
+  if (state.savingTrip) return toast('行程正在保存，请稍候。');
   if (!state.user) {
     state.pendingAfterLogin = 'save';
     state.loginOpen = true;
     if (renderModals) renderModals();
     return;
   }
+  state.savingTrip = true;
+  if (renderView) renderView();
   try {
     const res = await request('/api/trips/save', {
       method: 'POST',
@@ -57,11 +60,17 @@ export async function saveTrip({ renderModals, renderHeader, renderView, loadTri
     if (loadTripsCallback) await loadTripsCallback();
   } catch (error) {
     toast(error.message);
+  } finally {
+    state.savingTrip = false;
+    if (state.view === 'planning' && renderView) renderView();
   }
 }
 
 export async function openSavedTrip(id, { renderLoader, render, scheduleTripMap } = {}) {
   if (!state.user) return toast('请先登录后打开已保存行程。');
+  if (state.openingTripId) return toast('正在打开另一份行程，请稍候。');
+  state.openingTripId = String(id);
+  if (render) render();
   state.loading = true;
   if (renderLoader) renderLoader();
   try {
@@ -117,6 +126,7 @@ export async function openSavedTrip(id, { renderLoader, render, scheduleTripMap 
     toast(error.message);
   } finally {
     state.loading = false;
+    state.openingTripId = null;
     if (render) render();
     if (scheduleTripMap) scheduleTripMap();
   }
@@ -125,14 +135,21 @@ export async function openSavedTrip(id, { renderLoader, render, scheduleTripMap 
 export async function loadTrips(renderViewCallback, { force = false } = {}) {
   if (!state.user) return;
   if (!force && Array.isArray(state.savedTrips) && isPageDataFresh('trips')) return state.savedTrips;
+  if (state.tripsLoading) return state.savedTrips;
+  state.tripsLoading = true;
+  state.tripsLoadError = '';
+  if (state.view === 'trips' && renderViewCallback) renderViewCallback();
   try {
-    const data = await request('/api/trips');
+    const data = await request('/api/trips', { timeoutMs: 15000 });
     state.savedTrips = data.trips || [];
     markPageDataFresh('trips');
-    if (state.view === 'trips' && renderViewCallback) renderViewCallback();
     return state.savedTrips;
   } catch (error) {
+    state.tripsLoadError = error?.message || '无法读取已保存行程，请稍后重试。';
     toast(error.message);
+  } finally {
+    state.tripsLoading = false;
+    if (state.view === 'trips' && renderViewCallback) renderViewCallback();
   }
 }
 

@@ -47,15 +47,33 @@
               <h2>行程安排详情</h2>
               <p>共 {{ tripStore.trip.days.length }} 天行程 · 已自动去重与路线优化</p>
             </div>
-            <span class="status-pill">{{ tripStore.trip.sourceMode || 'Java Core AI' }}</span>
+            <div class="plan-status-actions">
+              <span class="status-pill">{{ tripStore.trip.sourceMode || 'Java Core AI' }}</span>
+              <button
+                class="secondary mini-btn"
+                type="button"
+                :disabled="tripStore.dynamicRefreshing"
+                title="仅在有具体行程日期时匹配高德天气预报"
+                @click="tripStore.refreshDynamicData()"
+              >
+                {{ tripStore.dynamicRefreshing ? '刷新中…' : '刷新天气与路线' }}
+              </button>
+            </div>
           </div>
 
-          <StrategyCards :plan-context="tripStore.trip.planContext" />
+          <!-- 策略卡片已精简移除 -->
 
           <div v-for="day in tripStore.trip.days" :key="day.day" class="day-block">
             <div class="day-head">
               <strong>{{ day.dateLabel || `第${day.day}天` }}</strong>
-              <span v-if="day.weather" class="weather-badge weather-live">{{ day.weather.value || '晴朗适宜' }} · 高德</span>
+              <span
+                v-if="day.weather"
+                class="weather-badge"
+                :class="day.weather.status === '动态' ? 'weather-live' : 'weather-pending'"
+                :title="day.weather.note || '天气信息需在出发前核验'"
+              >
+                {{ day.weather.value || '天气待确认' }}
+              </span>
             </div>
             <div v-if="day.departureContext" class="day-context">出发参考：{{ day.departureContext }}</div>
             <StopCard
@@ -136,8 +154,8 @@ function handleTogglePin(id: string) {
   }
 }
 
-function handleOpenDetail(venueId: string) {
-  tripStore.openDetail(venueId, { fromView: 'planning' });
+function handleOpenDetail(venueId: string, stop?: any) {
+  tripStore.openDetail(venueId, { fromView: 'planning', stop });
   router.push('/detail');
 }
 
@@ -220,6 +238,14 @@ function handleFeedback(val: string) {
   color: var(--red);
 }
 
+.plan-status-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 .planner-version-pill {
   background: #fef3c7;
   color: #92400e;
@@ -257,5 +283,10 @@ function handleFeedback(val: string) {
   border-radius: var(--radius-sm);
   font-size: 12px;
   font-weight: 600;
+}
+
+.weather-pending {
+  background: #fff7ed;
+  color: #c2410c;
 }
 </style>

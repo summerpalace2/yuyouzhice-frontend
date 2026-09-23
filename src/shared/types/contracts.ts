@@ -19,6 +19,7 @@ export interface Citation {
 
 export interface MapContext {
   coordinates: [number, number]; // [经度, 纬度]
+  location?: string;
   address: string;
   district: string;
   recommendedTransport: string;
@@ -58,6 +59,13 @@ export interface Stop {
   imageStatus?: 'READY' | 'DEGRADED' | 'FALLBACK' | string;
   imageReason?: string;
   imageSource?: string;
+  type?: 'ATTRACTION' | 'DINING' | string;
+  isDining?: boolean;
+  specialtyDish?: string;
+  costSummary?: string;
+  averageCost?: string;
+  diningType?: string;
+  distanceFromAttraction?: string;
   routeFromPrevious?: {
     selectedMode?: string;
     selected?: { summary: string };
@@ -126,6 +134,10 @@ export interface SourceStatus {
 
 export interface PlanContext {
   startingArea?: string;
+  startPlace?: string;
+  startLocation?: string;
+  radiusMeters?: number;
+  timeBudgetMinutes?: number;
   routePreference?: string;
   foodGuidance?: string;
   routeStrategy?: string;
@@ -256,6 +268,17 @@ export interface ExploreItem {
   summary: string;
   fit: string;
   tags: string[];
+  image?: string;
+  photoUrl?: string;
+}
+
+export interface BaiduSearchResultItem {
+  title: string;
+  snippet: string;
+  url: string;
+  source?: string;
+  category?: string;
+  thumbnail?: string;
 }
 
 export interface SavedTripRecord {
@@ -306,4 +329,16 @@ export interface AdminOverview {
       url?: string;
     }>;
   };
+}
+
+export interface IntentShadowStats {
+  enabled: boolean;
+  configured: boolean;
+  submitted: number;
+  completed: number;
+  matched: number;
+  mismatched: number;
+  failed: number;
+  rejected: number;
+  lastOutcome: string;
 }
