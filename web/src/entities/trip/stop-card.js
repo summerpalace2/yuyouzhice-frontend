@@ -129,7 +129,7 @@ export function stopCard(stop, dayNumber, stopIndex = null) {
             📍 到这去
           </button>
         `}
-        <button class="danger-mini" data-action="remove-stop" data-id="${escapeHtml(stop.id)}">
+        <button class="danger-mini" data-action="remove-stop" data-id="${escapeHtml(stop.id)}" ${(state.loading || state.applyPending) ? 'disabled aria-disabled="true"' : ''}>
           ✕ 移除
         </button>
       </div>

@@ -3,6 +3,8 @@ import { request } from '../../shared/api/client.js';
 import { toast } from '../../shared/ui/toast.js';
 import { saveUserPlan, saveUserChats, loadUserChats, getTripChatKey } from '../../app-core/user-store.js';
 import { invalidatePageCache } from '../../app-core/page-cache.js';
+import { detachChatWorkspace } from '../trip-chat/chat-service.js';
+import { captureWorkspace } from '../../app-core/workspace-lifecycle.js';
 
 export async function plan({
   prompt = null,
@@ -26,6 +28,10 @@ export async function plan({
     toast('AI 完整规划需要先登录，请登录后继续。');
     return;
   }
+  detachChatWorkspace();
+  const owner = captureWorkspace();
+  state.planOperation = owner;
+  const owns = () => state.planOperation === owner && owner.owns();
   if (!preserveSavedTripId) {
     state.savedTripId = null;
     state.itineraryMemorySnapshot = null;
@@ -43,6 +49,7 @@ export async function plan({
   if (renderLoader) renderLoader();
 
   const phaseTimer = window.setInterval(() => {
+    if (!owns()) return;
     const phases = ['理解旅行条件', '检索可信信息', '组合路线', '生成方案'];
     const index = phases.indexOf(state.loadingPhase);
     if (index >= 0 && index < phases.length - 1) {
@@ -62,6 +69,7 @@ export async function plan({
         preferenceDecision
       })
     });
+    if (!owns()) return;
     state.sessionId = data.sessionId;
     state.sessionAccessToken = data.sessionAccessToken || null;
     state.legacyMode = Boolean(data.legacyMode);
@@ -105,6 +113,7 @@ export async function plan({
 
     toast(usePreferences ? '已沿用长期偏好生成定制行程。' : '专属行程已生成！支持地图分天切换与自由微调。');
   } catch (error) {
+    if (!owns()) return;
     // If a new request fails, keep the previous draft but label it as stale;
     // otherwise the unchanged itinerary can look like a successful new result.
     state.planRequestError = state.trip
@@ -114,22 +123,33 @@ export async function plan({
     toast(error.message);
   } finally {
     window.clearInterval(phaseTimer);
-    state.loading = false;
-    state.loadingPhase = '';
-    if (render) render();
-    if (scheduleTripMap) scheduleTripMap();
+    if (owns()) {
+      state.loading = false;
+      state.loadingPhase = '';
+      if (render) render();
+      if (scheduleTripMap) scheduleTripMap();
+    }
+    if (state.planOperation === owner) state.planOperation = null;
   }
 }
 
 /** Refreshes volatile provider data without changing the itinerary revision. */
 export async function refreshDynamicData({ render, renderDynamic, scheduleTripMap, silent = false } = {}) {
-  if (!state.trip || !state.sessionId || state.dynamicRefreshing) return false;
+  if (!state.trip || !state.sessionId || (state.dynamicRefreshing && state.dynamicOperation?.owns())) return false;
+  const owner = captureWorkspace();
+  const submittedTrip = state.trip;
+  const revision = Number(state.trip.version || 1);
+  state.dynamicOperation = owner;
+  const owns = () => state.dynamicOperation === owner && owner.owns()
+    && state.sessionId === owner.sessionId && state.savedTripId === owner.savedTripId;
   state.dynamicRefreshing = true;
   if (renderDynamic) renderDynamic();
   try {
-    const data = await request(`/api/planner/sessions/${encodeURIComponent(state.sessionId)}/dynamic-refresh`, {
+    const data = await request(`/api/planner/sessions/${encodeURIComponent(owner.sessionId)}/dynamic-refresh`, {
       method: 'POST'
     });
+    if (!owns() || state.trip !== submittedTrip || Number(state.trip?.version || 1) !== revision
+      || (data.trip && Number(data.trip.version || 1) !== revision)) return false;
     if (data.trip) {
       state.trip = data.trip;
       state.dynamicRefreshSessionId = state.sessionId;
@@ -147,14 +167,18 @@ export async function refreshDynamicData({ render, renderDynamic, scheduleTripMa
     }
     return true;
   } catch (error) {
-    if (!silent) toast(error.message || '刷新实时数据失败。');
+    if (owns() && !silent) toast(error.message || '刷新实时数据失败。');
     return false;
   } finally {
-    state.dynamicRefreshing = false;
-    if (renderDynamic) {
+    const current = owns();
+    if (state.dynamicOperation === owner) {
+      state.dynamicOperation = null;
+      state.dynamicRefreshing = false;
+    }
+    if (current && renderDynamic) {
       renderDynamic();
       if (scheduleTripMap) scheduleTripMap();
-    } else if (render) {
+    } else if (current && render) {
       render();
     }
   }

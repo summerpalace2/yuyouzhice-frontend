@@ -4197,6 +4197,11 @@ body {
   color: #2563eb;
   border-color: #bfdbfe;
 }
+.cand-type-tea {
+  background: #ecfdf5;
+  color: #047857;
+  border-color: #a7f3d0;
+}
 .cand-specialty-box {
   display: flex;
   align-items: baseline;

@@ -1,11 +1,14 @@
 import { state } from '../../app-core/state.js';
 import { deviceId, request } from '../../shared/api/client.js';
 import { toast } from '../../shared/ui/toast.js';
-import { saveUserPlan, clearUserPlan, saveUserChats, loadUserChats, getTripChatKey } from '../../app-core/user-store.js';
-import { persistTripWorkspace } from '../trip-workspace/workspace-service.js';
+import { saveUserPlan, clearUserPlan, saveUserChats, loadUserChats, getTripChatKey, loadChatWorkspaceMeta } from '../../app-core/user-store.js';
+import { persistTripWorkspace, adoptTripWorkspace } from '../trip-workspace/workspace-service.js';
+import { captureWorkspace, captureAuthentication } from '../../app-core/workspace-lifecycle.js';
 import { invalidatePageCache, isPageDataFresh, markPageDataFresh } from '../../app-core/page-cache.js';
+import { detachChatWorkspace } from '../trip-chat/chat-service.js';
 
 export async function saveTrip({ renderModals, renderHeader, renderView, loadTripsCallback } = {}) {
+  if (state.tripMutationTicket?.owns()) return toast('行程正在更新，请完成后再保存。');
   if (!state.trip) return toast('还没有可保存的行程。');
   if (state.savingTrip) return toast('行程正在保存，请稍候。');
   if (!state.user) {
@@ -14,36 +17,42 @@ export async function saveTrip({ renderModals, renderHeader, renderView, loadTri
     if (renderModals) renderModals();
     return;
   }
+  const owner = captureWorkspace({ exact: true });
+  const oldKey = state.chatSessionId || getTripChatKey(owner.savedTripId, owner.sessionId);
+  const messages = structuredClone(state.tripChatHistories?.[oldKey] || state.chatMessages || []);
+  const submittedTrip = structuredClone(state.trip), chatMode = state.chatMode;
   state.savingTrip = true;
+  state.saveOperation = owner;
   if (renderView) renderView();
   try {
     const res = await request('/api/trips/save', {
       method: 'POST',
       body: JSON.stringify({
-        trip: state.trip,
-        plannerSessionId: state.sessionId || null,
-        savedTripId: state.savedTripId || state.trip?.savedTripId || null
+        trip: submittedTrip,
+        plannerSessionId: owner.sessionId || null,
+        savedTripId: owner.savedTripId || submittedTrip.savedTripId || null
       })
     });
     // 归档并同步该草稿的聊天历史至正式行程专属键
-    const oldKey = getTripChatKey(null, state.sessionId);
+    if (!owner.authenticated()) return;
     const savedId = res.saved?.id || res.savedTripId || res.tripId || (res.trip && res.trip.id);
     const newKey = getTripChatKey(savedId, null);
-    state.tripChatHistories = { ...loadUserChats(state.user?.id), ...(state.tripChatHistories || {}) };
-    if (state.tripChatHistories[oldKey] && !state.tripChatHistories[newKey]) {
-      state.tripChatHistories[newKey] = state.tripChatHistories[oldKey];
-    }
-    if (oldKey !== newKey) delete state.tripChatHistories[oldKey];
-    saveUserChats(state.user?.id, state.tripChatHistories);
-    if (savedId) {
+    const histories = loadUserChats(owner.userId);
+    histories[newKey] = histories[oldKey] || histories[newKey] || messages;
+    if (oldKey !== newKey) delete histories[oldKey];
+    saveUserChats(owner.userId, histories);
+    if (owner.owns()) state.tripChatHistories = histories;
+    const workspace = res.workspace && adoptTripWorkspace(res.workspace, { userId: owner.userId, savedTripId: savedId });
+    if (savedId && workspace) {
       await persistTripWorkspace({
         savedTripId: savedId,
-        sessionId: state.sessionId,
-        chatMessages: state.tripChatHistories[newKey] || [],
-        chatMode: state.chatMode
+        userId: owner.userId, sessionId: owner.sessionId,
+        chatMessages: histories[newKey] || [], chatMode,
+        chatEpoch: workspace.chatEpoch, expectedRevision: workspace.workspaceRevision
       }, { immediate: true });
     }
-    clearUserPlan(state.user?.id);
+    if (!owner.owns()) return;
+    clearUserPlan(owner.userId);
 
     // 正式行程写入会影响“我的行程”“旅行档案”和会话记录；仅失效这些数据页，
     // 不触碰当前聊天、地图或其它已加载页面。
@@ -59,22 +68,28 @@ export async function saveTrip({ renderModals, renderHeader, renderView, loadTri
     if (renderView) renderView();
     if (loadTripsCallback) await loadTripsCallback();
   } catch (error) {
-    toast(error.message);
+    if (owner.owns()) toast(error.message);
   } finally {
-    state.savingTrip = false;
-    if (state.view === 'planning' && renderView) renderView();
+    if (state.saveOperation === owner) {
+      state.saveOperation = null; state.savingTrip = false;
+      if (owner.owns() && state.view === 'planning' && renderView) renderView();
+    }
   }
 }
 
 export async function openSavedTrip(id, { renderLoader, render, scheduleTripMap } = {}) {
   if (!state.user) return toast('请先登录后打开已保存行程。');
   if (state.openingTripId) return toast('正在打开另一份行程，请稍候。');
+  detachChatWorkspace();
+  const owner = captureWorkspace();
   state.openingTripId = String(id);
+  state.openOperation = owner;
   if (render) render();
   state.loading = true;
   if (renderLoader) renderLoader();
   try {
     const data = await request(`/api/trips/${encodeURIComponent(id)}/open`, { method: 'POST' });
+    if (!owner.owns()) return;
     state.sessionId = data.sessionId;
     state.savedTripId = data.savedTripId || id;
     state.legacyMode = Boolean(data.legacyMode);
@@ -98,18 +113,22 @@ export async function openSavedTrip(id, { renderLoader, render, scheduleTripMap 
     const workspace = data.workspace && typeof data.workspace === 'object' ? data.workspace : {};
     const localMessages = state.tripChatHistories[tripChatKey] || [];
     const remoteMessages = Array.isArray(workspace.chatMessages) ? workspace.chatMessages : [];
-    // A just-finished local write can be ahead of the server by a few hundred
-    // milliseconds. Keep the longer transcript and immediately heal storage.
-    state.chatMessages = remoteMessages.length >= localMessages.length ? remoteMessages : localMessages;
+    const localMeta = loadChatWorkspaceMeta(owner.userId, tripChatKey);
+    const recoverLocal = localMeta?.dirty && !localMeta.blocked && workspace.chatEpoch
+      && localMeta.chatEpoch === workspace.chatEpoch
+      && Number(localMeta.workspaceRevision) === Number(workspace.workspaceRevision);
+    state.chatMessages = recoverLocal ? localMessages : remoteMessages;
+    adoptTripWorkspace(workspace, { userId: owner.userId, savedTripId: state.savedTripId });
     state.chatMode = workspace.chatMode === 'planner' ? 'planner' : 'chat';
     state.itineraryMemorySnapshot = workspace.itineraryMemorySnapshot || null;
     state.chatMeta = null;
     state.chatProposal = null;
     state.tripChatHistories[tripChatKey] = state.chatMessages;
     saveUserChats(state.user?.id, state.tripChatHistories);
-    if (localMessages.length > remoteMessages.length) {
+    if (recoverLocal) {
       await persistTripWorkspace({}, { immediate: true });
     }
+    if (!owner.owns()) return;
 
     // 持久化当前用户的活动规划状态为该打开的行程（无敏感凭据）
     saveUserPlan(state.user?.id, {
@@ -123,48 +142,73 @@ export async function openSavedTrip(id, { renderLoader, render, scheduleTripMap 
 
     toast(data.message || '已打开正式行程，可继续调整。');
   } catch (error) {
-    toast(error.message);
+    if (owner.owns()) toast(error.message);
   } finally {
-    state.loading = false;
-    state.openingTripId = null;
-    if (render) render();
-    if (scheduleTripMap) scheduleTripMap();
+    if (state.openOperation === owner) {
+      state.openOperation = null; state.openingTripId = null;
+      if (owner.owns()) {
+        state.loading = false;
+        if (render) render();
+        if (scheduleTripMap) scheduleTripMap();
+      }
+    }
   }
 }
 
 export async function loadTrips(renderViewCallback, { force = false } = {}) {
   if (!state.user) return;
   if (!force && Array.isArray(state.savedTrips) && isPageDataFresh('trips')) return state.savedTrips;
-  if (state.tripsLoading) return state.savedTrips;
+  if (state.tripsLoading && state.tripsLoadOperation?.owns()) return state.savedTrips;
+  const owner = captureAuthentication();
+  state.tripsLoadOperation = owner;
+  const owns = () => state.tripsLoadOperation === owner && owner.owns();
   state.tripsLoading = true;
   state.tripsLoadError = '';
   if (state.view === 'trips' && renderViewCallback) renderViewCallback();
   try {
     const data = await request('/api/trips', { timeoutMs: 15000 });
+    if (!owns()) return;
     state.savedTrips = data.trips || [];
     markPageDataFresh('trips');
     return state.savedTrips;
   } catch (error) {
+    if (!owns()) return;
     state.tripsLoadError = error?.message || '无法读取已保存行程，请稍后重试。';
     toast(error.message);
   } finally {
-    state.tripsLoading = false;
-    if (state.view === 'trips' && renderViewCallback) renderViewCallback();
+    if (owns()) {
+      state.tripsLoading = false;
+      if (state.view === 'trips' && renderViewCallback) renderViewCallback();
+    }
+    if (state.tripsLoadOperation === owner) state.tripsLoadOperation = null;
   }
 }
 
 export async function deleteTrip(id, { renderModals, updateTripsInDOM, loadTripsCallback } = {}) {
   if (!state.user) return toast('请先登录后删除行程。');
+  const displayedTrip = Array.isArray(state.savedTrips)
+    ? state.savedTrips.find((item) => String(item.id) === String(id)) : null;
+  const expectedVersion = displayedTrip?.trip?.version;
+  if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 1) {
+    invalidatePageCache('trips');
+    if (loadTripsCallback) await loadTripsCallback();
+    return toast('请刷新行程列表后重试删除。');
+  }
+  const owner = captureAuthentication();
   const previousTrips = state.savedTrips;
   state.savedTrips = Array.isArray(state.savedTrips)
     ? state.savedTrips.filter((item) => String(item.id) !== String(id))
     : state.savedTrips;
+  const optimisticTrips = state.savedTrips;
   state.deleteConfirm = null;
   if (renderModals) renderModals();
   if (updateTripsInDOM) updateTripsInDOM();
   toast('已从当前列表移除，正在后台删除。');
   try {
-    await request(`/api/trips/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    await request(`/api/trips/${encodeURIComponent(id)}`, {
+      method: 'DELETE', body: JSON.stringify({ expectedVersion })
+    });
+    if (!owner.owns()) return;
     const tripChatKey = getTripChatKey(id, null);
     state.tripChatHistories = { ...loadUserChats(state.user?.id), ...(state.tripChatHistories || {}) };
     delete state.tripChatHistories[tripChatKey];
@@ -177,7 +221,9 @@ export async function deleteTrip(id, { renderModals, updateTripsInDOM, loadTrips
     invalidatePageCache('profile', 'history');
     toast('已删除这条行程。');
   } catch (error) {
-    state.savedTrips = previousTrips;
+    if (!owner.owns()) return;
+    if (state.savedTrips === optimisticTrips) state.savedTrips = previousTrips;
+    invalidatePageCache('trips');
     if (updateTripsInDOM) updateTripsInDOM();
     else if (loadTripsCallback) await loadTripsCallback();
     toast(error.message);

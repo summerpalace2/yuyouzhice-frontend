@@ -10,6 +10,7 @@ import './styles.css';
 // 1. 领域模型与响应式状态
 export { GOLDEN_PROMPT, preferences, state } from './src/app-core/state.js';
 import { GOLDEN_PROMPT, preferences, state } from './src/app-core/state.js';
+import { invalidateAuthentication, captureAuthentication } from './src/app-core/workspace-lifecycle.js';
 import { saveUserPlan, saveUserChats, loadUserPlan, syncAnonymousDraftToUser, loadUserChats, getTripChatKey, startGuestChatSession } from './src/app-core/user-store.js';
 import { persistTripWorkspace } from './src/features/trip-workspace/workspace-service.js';
 import { clearPageCache, invalidatePageCache, markPageDataFresh } from './src/app-core/page-cache.js';
@@ -357,7 +358,8 @@ const ACTION_OWNER = new Map([
     'switch-adjustment-mode', 'request-other-proposals', 'open-chat-dock',
     'close-chat-dock', 'dismiss-planner-proposal', 'reset-chat',
     'unpin-and-retry', 'cancel-chat', 'retry-chat', 'quick-ai-action',
-    'quick-same-district-replace', 'execute-action-chip'
+    'quick-same-district-replace', 'execute-action-chip',
+    'acknowledge-chat-mode-guide', 'show-chat-mode-guide'
   ].map((action) => [action, 'chat'])
 ]);
 
@@ -827,6 +829,8 @@ function buildPromptFromConstraints(c) {
     state.loading = true;
     state.loginError = '';
     renderLoader();
+    invalidateAuthentication();
+    const authentication = captureAuthentication();
 
     try {
       const registering = state.authMode === 'register';
@@ -841,7 +845,9 @@ function buildPromptFromConstraints(c) {
           sessionId: state.sessionId || null
         })
       });
+      if (!authentication.current()) return;
       clearPageCache();
+      invalidateAuthentication();
       state.csrfToken = data.csrfToken || null;
       state.user = data.user;
       state.loginOpen = false;

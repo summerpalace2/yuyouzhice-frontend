@@ -1,3 +1,5 @@
+import { proposalUnavailable } from './proposal-availability.js';
+import { chatModeGuideHtml } from './chat-mode-guide.js';
 import { state } from '../../app-core/state.js';
 import { escapeHtml } from '../../shared/lib/security.js';
 import { renderMarkdownStatic, renderMarkdownStreaming } from '../../shared/lib/markdown.js';
@@ -31,14 +33,6 @@ export function chatMessageHtml(message) {
   const errorSummary = duplicatedError
     ? (/登录/.test(errorText) ? '需要登录后才能继续聊天' : '这次回复没有完成，请重试')
     : errorText;
-  const planLineMatch = role === 'assistant' && !message.pending
-    ? content.match(/(?:🧭\s*)?(方案\s*([A-CＡ-Ｃ])[：:、\s\-—]([^\n]+))/i)
-    : null;
-  const planLabel = planLineMatch ? planLineMatch[2] : (role === 'assistant' && !message.pending ? content.match(/方案\s*([A-CＡ-Ｃ])/i)?.[1] : null);
-  const planSummary = planLineMatch ? planLineMatch[3].trim().replace(/^[（(]|[）)]$/g, '').slice(0, 45) : '';
-  const planPrompt = planSummary
-    ? `采用方案${planLabel}：${planSummary}，帮我局部调整行程`
-    : `方案${planLabel}选这个，帮我局部调整行程`;
   let bodyHtml;
   if (role === 'user') {
     bodyHtml = escapeHtml(message.content || '').replace(/\n/g, '<br />');
@@ -61,30 +55,31 @@ export function chatMessageHtml(message) {
       <span class="chat-error-actions">
         ${!state.user && /登录/.test(errorText) ? '<button class="chat-inline-action chat-login-action" type="button" data-action="open-auth-page" data-mode="login">去登录</button>' : ''}
         ${message.retryMessage && !plannerSessionError ? `<button class="chat-inline-action" type="button" data-action="retry-chat" data-prompt="${escapeHtml(message.retryMessage)}">重新发送</button>` : ''}
-        ${offerChatMode ? '<button class="chat-inline-action chat-mode-fallback-action" type="button" data-action="switch-chat-mode">切换到聊天</button>' : ''}
-        ${offerAdjustmentMode ? `<button class="chat-inline-action chat-mode-adjust-action" type="button" data-action="switch-adjustment-mode" data-prompt="${escapeHtml(message.retryMessage || '')}">切换到局部调整</button>` : ''}
+        ${offerChatMode ? '<button class="chat-inline-action chat-mode-fallback-action" type="button" data-action="switch-chat-mode">切换至聊天模式</button>' : ''}
+        ${offerAdjustmentMode ? `<button class="chat-inline-action chat-mode-adjust-action" type="button" data-action="switch-adjustment-mode" data-prompt="${escapeHtml(message.retryMessage || '')}">切换至调整模式</button>` : ''}
       </span>
     </div>
   ` : '';
-  const planActionHtml = planLabel ? `
-    <div class="chat-message-actions">
-      <button class="chip primary-chip" type="button" data-action="quick-ai-action" data-mode="planner" data-prompt="${escapeHtml(planPrompt)}">🧭 采用方案${escapeHtml(planLabel)}，查看局部调整</button>
-    </div>
-  ` : '';
-
   const rawSuggestions = Array.isArray(message.actionableSuggestions) ? message.actionableSuggestions : [];
   const suggestions = deduplicateSuggestions(rawSuggestions);
+  const hasMemory = suggestions.some((sug) => sug.action === 'save_memory' || sug.action === 'save_slot_preference');
+  const hasAdjust = suggestions.some((sug) => sug.action !== 'save_memory' && sug.action !== 'save_slot_preference');
+  const hintText = (hasMemory && hasAdjust)
+    ? 'AI 感知到你的出行偏好，可一键执行调整或沉淀档案：'
+    : (hasMemory ? 'AI 感知到你的出行偏好，可一键沉淀至个人档案：' : 'AI 为你提供以下快捷行程微调建议：');
   const chipsHtml = (role === 'assistant' && !message.pending && suggestions.length > 0) ? `
     <div class="chat-action-chips-group" role="group" aria-label="快捷行动建议">
       <div class="chat-action-chips-hint">
         <span class="chat-action-chips-icon">✦</span>
-        <span>AI 感知到你的出行偏好，可一键执行调整或沉淀档案：</span>
+        <span>${escapeHtml(hintText)}</span>
       </div>
       <div class="chat-action-chips-list">
         ${suggestions.map((sug) => {
-          const isApplied = Boolean(sug.applied);
           const isSlotPref = sug.action === 'save_slot_preference';
           const isMemory = sug.action === 'save_memory' || isSlotPref;
+          // Old chips were marked applied before saving. Require a real memory receipt.
+          const isApplied = Boolean(sug.applied && (!isMemory || (sug.savedMemoryId
+            && (!Array.isArray(state.profile?.memories) || state.profile.memories.some(m => m.id === sug.savedMemoryId)))));
           const appliedText = isSlotPref ? '已加入偏好' : (isMemory ? '已沉淀至档案' : '已发起调整');
           return `
           <button class="chat-action-chip ${isMemory ? 'is-memory-chip' : ''} ${isApplied ? 'is-applied' : ''}"
@@ -110,7 +105,6 @@ export function chatMessageHtml(message) {
       <div class="chat-message-content">${bodyHtml}</div>
       ${chipsHtml}
       ${errorHtml}
-      ${planActionHtml}
     </div>
   `;
 }
@@ -122,29 +116,63 @@ export function chatMetaHtml(meta) {
 
 export function plannerProposalHtml(proposal) {
   if (!proposal) return '';
-  const changed = Array.isArray(proposal.changedSegments) ? proposal.changedSegments.length : 0;
-  const isFeasible = proposal.feasible !== false;
+  const selectedChanges = proposal.optionStopChanges?.[state.selectedOptionId || 'option-1'] || proposal.stopChanges || [];
+  const changed = selectedChanges.length;
+  if (proposalUnavailable(proposal, state.selectedOptionId || 'option-1')) {
+    const validOptions = Object.entries(proposal.optionStatus || {}).filter(([id,status]) => status.canApply !== false);
+    return `<div class="chat-proposal proposal-unavailable" role="status">
+      <div class="chat-proposal-head"><strong>暂未生成可应用的方案</strong></div>
+      <p>${escapeHtml(proposal.message || '未找到可用候选，请补充具体地点或调整搜索条件。')}</p>
+      ${validOptions.length ? `<p>当前所选候选不能应用，可以改选其他方案：</p>${validOptions.map(([id]) => `<button class="secondary mini-btn" type="button" data-action="select-option" data-option-id="${escapeHtml(id)}">查看${escapeHtml(id.replace('option-', '方案'))}</button>`).join('')}` : ''}
+      <div class="chat-proposal-actions"><button class="ghost mini-btn" type="button" data-action="dismiss-planner-proposal" data-close-only="true">关闭提示</button></div>
+    </div>`;
+  }
+  const selectedStatus = proposal.optionStatus?.[state.selectedOptionId || 'option-1'];
+  const isFeasible = (selectedStatus?.feasible ?? proposal.feasible) !== false;
   const alternatives = Array.isArray(proposal.alternatives) ? proposal.alternatives : [];
   const candidates = Array.isArray(proposal.candidateReplacements) ? proposal.candidateReplacements : [];
   const selectedOption = state.selectedOptionId || 'option-1';
   const directCandidate = candidates.find((candidate) => candidate.directReplacement) || candidates[0];
   const isDirectReplacement = proposal.replacementMode === 'DIRECT' || Boolean(directCandidate?.directReplacement);
-  const isDiningReplacement = proposal.replacementMode === 'DINING' || candidates.some((c) => c.isDining || c.type === 'DINING');
+
+  const isTeaOrSnack = proposal.replacementMode === 'TEA_BREAK'
+    || candidates.some((c) => c.slotType === 'TEA_BREAK' || c.isTeaVenue || (c.name && (c.name.includes('茶') || c.name.includes('甜') || c.name.includes('品茗'))));
+  const isAddStop = proposal.intent?.operation === 'ADD_STOP'
+    || proposal.intent?.type === 'ADD_STOP'
+    || proposal.replacementMode === 'TEA_BREAK'
+    || proposal.replacementMode === 'DINING_ADD';
+  const isDiningReplacement = proposal.replacementMode === 'DINING' || (!isTeaOrSnack && candidates.some((c) => c.isDining || c.type === 'DINING'));
+  const isDining = isDiningReplacement || proposal.replacementMode === 'DINING_ADD' || isTeaOrSnack;
+
   const sourceName = proposal.sourceStopName || proposal.intent?.targetStopReference || '当前站点';
   const requestedName = proposal.requestedReplacementName || directCandidate?.requestedName || directCandidate?.name || '目标地点';
 
-  const overline = isDirectReplacement
-    ? 'ONE-TO-ONE CHANGE'
-    : (isDiningReplacement ? 'LOCAL DINING UPGRADE' : 'LOCAL ITINERARY CHANGE');
+  const overline = isTeaOrSnack
+    ? (isAddStop ? 'LOCAL TEA & DESSERT ADDITION' : 'LOCAL TEA BREAK UPGRADE')
+    : (isAddStop
+      ? (isDining ? 'LOCAL DINING ADDITION' : 'LOCAL ITINERARY ADDITION')
+      : (isDirectReplacement
+        ? 'ONE-TO-ONE CHANGE'
+        : (isDining ? 'LOCAL DINING UPGRADE' : 'LOCAL ITINERARY CHANGE')));
+
   const headerTitle = isFeasible
-    ? (isDirectReplacement ? '一对一替换预览' : (isDiningReplacement ? '地道美食调整预览' : '行程调整预览'))
+    ? (isTeaOrSnack
+      ? (isAddStop ? '特色茶歇加站预览' : '地道茶歇调整预览')
+      : (isAddStop
+        ? (isDining ? '特色餐饮加站预览' : '行程加站游览预览')
+        : (isDirectReplacement ? '一对一替换预览' : (isDining ? '地道美食调整预览' : '行程调整预览'))))
     : '路线提示：仍可按你的选择执行';
+
   const impactLabel = isFeasible
-    ? (isDiningReplacement ? '🍽️ 美食升级' : (changed ? `仅影响 ${changed} 站` : '局部微调'))
+    ? (isTeaOrSnack
+      ? '🍵 惬意茶歇'
+      : (isAddStop
+        ? (isDining ? '🍽️ 美食加站' : '📍 新增游玩')
+        : (isDining ? '🍽️ 美食升级' : (changed ? `仅影响 ${changed} 站` : '局部微调'))))
     : '顺路度较低';
 
   return `
-    <div class="chat-proposal ${!isFeasible ? 'proposal-infeasible' : ''} ${isDiningReplacement ? 'proposal-dining' : ''}" role="region" aria-label="行程调整方案预览">
+    <div class="chat-proposal ${!isFeasible ? 'proposal-infeasible' : ''} ${isDining ? 'proposal-dining' : ''}" role="region" aria-label="行程调整方案预览">
       <div class="chat-proposal-head">
         <div>
           <span class="proposal-overline">${overline}</span>
@@ -154,7 +182,7 @@ export function plannerProposalHtml(proposal) {
       </div>
       ${isDirectReplacement ? `<div class="direct-replacement-summary"><span class="direct-replacement-place">${escapeHtml(sourceName)}</span><span class="direct-replacement-arrow">→</span><strong>${escapeHtml(requestedName)}</strong><small>确认后只替换这一站，最终决定权在你</small></div>` : ''}
       <p class="proposal-message">${escapeHtml(isFeasible
-        ? (proposal.message || (isDirectReplacement ? '已锁定目标地点；确认后只替换这一站，其余安排保持不变。' : (isDiningReplacement ? '已为您推荐候选餐厅，请选择心仪方案后确认应用。' : '悠悠已为你生成局部调整预览。')))
+        ? (proposal.message || (isDirectReplacement ? '已锁定目标地点；确认后只替换这一站，其余安排保持不变。' : (isTeaOrSnack ? '已为您推荐特色茶歇方案，请选择心仪茶社后确认应用。' : (isDining ? '已为您推荐候选餐厅，请选择心仪方案后确认应用。' : '悠悠已为你生成局部调整预览。'))))
         : '按当前时间与路线，采用后当天可能更赶一些。这个提示不会阻止你修改，是否采用仍由你决定。')}</p>
 
       ${!isFeasible ? `
@@ -167,20 +195,28 @@ export function plannerProposalHtml(proposal) {
         </div>
       ` : ''}
 
+      ${Array.isArray(selectedChanges) && selectedChanges.length ? `<div class="proposal-change-summary" role="status"><strong>确认后将发生以下改动：</strong><ul>${selectedChanges.map(change => `<li>${escapeHtml(change.before?.name || '新增站点')} ${escapeHtml(change.before?.time || '')} → ${escapeHtml(change.after?.name || '移除')} ${escapeHtml(change.after?.time || '')}</li>`).join('')}</ul><small>预览尚未应用</small></div>` : ''}
       ${candidates.length > 0 ? `
         <div class="candidate-options-group">
           <div class="options-title-bar">
-            <span class="options-title-icon">${isDiningReplacement ? '🍲' : (isDirectReplacement ? '🎯' : '✨')}</span>
-            <span class="options-title-text">${isDirectReplacement ? '已精准锁定目标地点，请确认替换：' : (isDiningReplacement ? '为你推荐契合口味的替换餐厅（点击卡片切换）：' : '为你推荐契合行程的候选方案（点击卡片切换）：')}</span>
+            <span class="options-title-icon">${isTeaOrSnack ? '🫖' : (isDining ? '🍲' : (isDirectReplacement ? '🎯' : '✨'))}</span>
+            <span class="options-title-text">${isDirectReplacement
+              ? '已精准锁定目标地点，请确认替换：'
+              : (isTeaOrSnack
+                ? (isAddStop ? '为你推荐契合偏好的特色茶歇/小憩方案（点击卡片切换）：' : '为你推荐契合口味的特色茶社（点击卡片切换）：')
+                : (isDining
+                  ? (isAddStop ? '为你推荐契合偏好的特色加餐方案（点击卡片切换）：' : '为你推荐契合口味的替换餐厅（点击卡片切换）：')
+                  : (isAddStop ? '为你推荐契合行程的新增游览方案（点击卡片切换）：' : '为你推荐契合行程的候选方案（点击卡片切换）：')))}</span>
           </div>
           <div class="candidate-options-list">
             ${candidates.map((cand, idx) => {
               const optId = cand.optionId || `option-${idx + 1}`;
               const isSelected = optId === selectedOption;
-              const isDining = cand.isDining || cand.type === 'DINING' || Boolean(cand.specialtyDish);
+              const isCandTea = cand.slotType === 'TEA_BREAK' || cand.isTeaVenue || (cand.name && (cand.name.includes('茶') || cand.name.includes('甜') || cand.name.includes('品茗')));
+              const isDiningCard = cand.isDining || cand.type === 'DINING' || Boolean(cand.specialtyDish) || isCandTea;
               const isTopPick = idx === 0 && !isDirectReplacement;
               return `
-                <div class="candidate-option-card ${isSelected ? 'selected' : ''} ${isDining ? 'candidate-dining-card' : 'candidate-attraction-card'}" data-action="select-option" data-option-id="${escapeHtml(optId)}">
+                <div class="candidate-option-card ${isSelected ? 'selected' : ''} ${isDiningCard ? 'candidate-dining-card' : 'candidate-attraction-card'}" data-action="select-option" data-option-id="${escapeHtml(optId)}">
                   <div class="cand-card-top">
                     <div class="cand-scheme-badge-wrap">
                       <span class="cand-scheme-pill ${isTopPick ? 'cand-scheme-recommended' : ''} ${isDirectReplacement ? 'cand-scheme-direct' : ''}">
@@ -190,8 +226,8 @@ export function plannerProposalHtml(proposal) {
                     </div>
                     <div class="cand-meta-chips">
                       ${cand.district ? `<span class="cand-chip cand-chip-district">📍 ${escapeHtml(cand.district)}</span>` : ''}
-                      ${isDining && (cand.costSummary || cand.averageCost) ? `<span class="cand-chip cand-chip-cost">💰 ${escapeHtml(cand.costSummary || cand.averageCost)}</span>` : ''}
-                      ${!isDining && cand.walkDifficulty ? `<span class="cand-chip cand-chip-walk">🚶 步行${escapeHtml(cand.walkDifficulty)}</span>` : ''}
+                      ${isDiningCard && (cand.costSummary || cand.averageCost) ? `<span class="cand-chip cand-chip-cost">💰 ${escapeHtml(cand.costSummary || cand.averageCost)}</span>` : ''}
+                      ${!isDiningCard && cand.walkDifficulty ? `<span class="cand-chip cand-chip-walk">🚶 步行${escapeHtml(cand.walkDifficulty)}</span>` : ''}
                       ${cand.walk ? `<span class="cand-chip cand-chip-dist">🚶 ${escapeHtml(cand.walk)}</span>` : ''}
                     </div>
                   </div>
@@ -204,12 +240,12 @@ export function plannerProposalHtml(proposal) {
                     <div class="cand-info-col">
                       <div class="cand-name-row">
                         <strong class="cand-venue-name">${escapeHtml(cand.requestedName || cand.name)}</strong>
-                        ${isDining ? '<span class="cand-type-pill">地道美食</span>' : '<span class="cand-type-pill cand-type-attraction">游玩景点</span>'}
+                        ${isCandTea ? '<span class="cand-type-pill cand-type-tea">特色茶歇</span>' : (isDiningCard ? '<span class="cand-type-pill">地道美食</span>' : '<span class="cand-type-pill cand-type-attraction">游玩景点</span>')}
                       </div>
 
-                      ${isDining && cand.specialtyDish ? `
+                      ${isDiningCard && cand.specialtyDish ? `
                         <div class="cand-specialty-box">
-                          <span class="cand-specialty-badge">🥘 招牌必吃</span>
+                          <span class="cand-specialty-badge">${isCandTea ? '🍵 招牌品茗' : '🥘 招牌必吃'}</span>
                           <span class="cand-specialty-dish">${escapeHtml(cand.specialtyDish)}</span>
                         </div>
                       ` : ''}
@@ -226,13 +262,13 @@ export function plannerProposalHtml(proposal) {
 
       <div class="chat-proposal-actions">
         ${isFeasible ? `
-          <button class="primary mini-btn proposal-primary-action" type="button" data-action="confirm-planner-proposal">确认并应用</button>
-          ${!isDirectReplacement ? `<button class="ghost mini-btn" type="button" data-action="request-other-proposals" data-prompt="${isDiningReplacement ? '换同片区其他美食餐厅' : '换同片区其他景点'}">${isDiningReplacement ? '查看其他餐厅' : '查看其他景点'}</button>` : ''}
+          <button class="primary mini-btn proposal-primary-action" type="button" ${state.applyPending ? 'disabled' : ''} data-action="confirm-planner-proposal">确认并应用</button>
+          ${!isDirectReplacement ? `<button class="ghost mini-btn" type="button" data-action="request-other-proposals" data-prompt="${isTeaOrSnack ? '换同片区其他茶馆茶社' : (isDining ? '换同片区其他美食餐厅' : '换同片区其他景点')}">${isTeaOrSnack ? '查看其他茶社' : (isDining ? '查看其他餐厅' : '查看其他景点')}</button>` : ''}
         ` : `
-          <button class="primary mini-btn proposal-primary-action" type="button" data-action="force-apply-planner-proposal">仍按此方案调整</button>
-          ${state.selectedStopId ? `<button class="secondary mini-btn" type="button" data-action="request-other-proposals" data-prompt="${isDiningReplacement ? '换同片区其他美食餐厅' : '换同片区其他景点'}">${isDiningReplacement ? '查看其他餐厅' : '查看替代方案'}</button>` : ''}
+          <button class="primary mini-btn proposal-primary-action" type="button" ${state.applyPending ? 'disabled' : ''} data-action="force-apply-planner-proposal">仍按此方案调整</button>
+          ${state.selectedStopId ? `<button class="secondary mini-btn" type="button" data-action="request-other-proposals" data-prompt="${isTeaOrSnack ? '换同片区其他茶馆茶社' : (isDining ? '换同片区其他美食餐厅' : '换同片区其他景点')}">${isTeaOrSnack ? '查看其他茶社' : (isDining ? '查看其他餐厅' : '查看替代方案')}</button>` : ''}
         `}
-        <button class="ghost mini-btn proposal-dismiss-action" type="button" data-action="dismiss-planner-proposal">取消本次调整</button>
+        <button class="ghost mini-btn proposal-dismiss-action" type="button" data-action="dismiss-planner-proposal">取消本轮调整</button>
       </div>
     </div>
   `;
@@ -240,7 +276,8 @@ export function plannerProposalHtml(proposal) {
 
 export function chatProposalHtml(proposal) {
   if (!proposal) return '';
-  const changed = Array.isArray(proposal.changedSegments) ? proposal.changedSegments.length : 0;
+  const selectedChanges = proposal.optionStopChanges?.[state.selectedOptionId || 'option-1'] || proposal.stopChanges || [];
+  const changed = selectedChanges.length;
   return `
     <div class="chat-proposal" role="region" aria-label="行程修改方案">
       <div class="chat-proposal-head"><strong>待确认的行程修改</strong><span class="chip">${changed ? `影响 ${changed} 个站点` : '仅建议，不会自动修改'}</span></div>
@@ -258,7 +295,7 @@ export function chatModeBannerHtml() {
   const isDining = selectedStop?.type === 'DINING' || selectedStop?.icon === '餐';
   const hasPlanningContext = state.view === 'planning' && Boolean(state.trip);
   const isAdjustment = hasPlanningContext && state.chatMode === 'planner';
-  const modeLabel = isAdjustment ? (isDining ? '餐饮调整' : '局部调整') : (isDining ? '美食问答' : '聊天');
+  const modeLabel = isAdjustment ? '调整模式' : '聊天模式';
   const modeDescription = isAdjustment
     ? (isDining ? '只调整餐饮选择与风味类型，确认后才会应用' : '只调整当前行程片段，确认后才会应用')
     : (isDining ? '专注于解答附近餐厅、招牌特色与排队建议' : (hasPlanningContext ? '只回答景点、天气和出行问题，不修改行程' : '游客模式：只回答旅行问题，不修改或保存行程'));
@@ -266,9 +303,11 @@ export function chatModeBannerHtml() {
     ? (isDining ? `当前餐饮：${selectedStop.name}` : `当前站点：${selectedStop.name}`)
     : '';
   return `
+    ${hasPlanningContext ? chatModeGuideHtml(state.user?.id, state.chatModeGuideOpen) : ''}
     <div class="chat-mode-helper ${isAdjustment ? 'is-adjustment' : 'is-chat'} ${isDining ? 'is-dining-helper' : ''}">
       <span class="chat-mode-helper-icon" aria-hidden="true">${isDining ? '🥢' : (isAdjustment ? '✦' : '◌')}</span>
       <span class="chat-mode-helper-copy"><strong>${modeLabel}</strong><small>${modeDescription}</small></span>
+      ${hasPlanningContext ? '<button type="button" class="chat-mode-help" data-action="show-chat-mode-guide">模式说明</button>' : ''}
       ${selectedStopName ? `<span class="chat-selected-stop" style="${isDining ? 'background: #ffedd5; color: #c2410c;' : ''}">${escapeHtml(selectedStopName)}</span>` : ''}
     </div>
   `;
@@ -378,7 +417,7 @@ export function chatModeTabsHtml(mode = state.chatMode) {
         aria-selected="${!isAdjustment}"
         title="只回答景点、天气、美食等咨询，不改动行程">
         <span class="chat-mode-tab-icon">💬</span>
-        <span>自由问答</span>
+        <span>聊天模式</span>
       </button>
       <button type="button"
         class="chat-mode-tab-btn ${isAdjustment ? 'is-active' : ''}"
@@ -387,7 +426,7 @@ export function chatModeTabsHtml(mode = state.chatMode) {
         aria-selected="${isAdjustment}"
         title="结合当前行程进行局部调整、加减或替换景点">
         <span class="chat-mode-tab-icon">⚡</span>
-        <span>局部规划</span>
+        <span>调整模式</span>
       </button>
     </div>
   `;
@@ -485,19 +524,40 @@ export function floatingChatDock() {
  */
 export function floatingPlannerProposalDock() {
   if (state.view !== 'planning' || !state.trip || !state.activeProposal) return '';
+  const proposal = state.activeProposal;
+  const candidates = Array.isArray(proposal.candidateReplacements) ? proposal.candidateReplacements : [];
+  const isTeaOrSnack = proposal.replacementMode === 'TEA_BREAK'
+    || candidates.some((c) => c.slotType === 'TEA_BREAK' || c.isTeaVenue || (c.name && (c.name.includes('茶') || c.name.includes('甜') || c.name.includes('品茗'))));
+  const isAddStop = proposal.intent?.operation === 'ADD_STOP'
+    || proposal.intent?.type === 'ADD_STOP'
+    || proposal.replacementMode === 'TEA_BREAK'
+    || proposal.replacementMode === 'DINING_ADD';
+  const isDirectReplacement = proposal.replacementMode === 'DIRECT';
+  const isDining = proposal.replacementMode === 'DINING' || proposal.replacementMode === 'DINING_ADD'
+    || candidates.some((c) => c.isDining || c.type === 'DINING');
+
+  const dockKicker = isTeaOrSnack ? 'TEA & BREAK' : (isDining ? 'LOCAL DINING' : 'TRIP DECISION');
+  const dockTitle = proposalUnavailable(proposal, state.selectedOptionId || 'option-1') ? '需要补充调整条件' : isTeaOrSnack
+    ? (isAddStop ? '特色茶歇加站预览' : '特色茶歇调整预览')
+    : (isAddStop
+      ? (isDining ? '特色加餐预览' : '新增景点游览预览')
+      : (isDirectReplacement ? '精准替换预览' : (isDining ? '地道美食调整预览' : '局部调整预览')));
+  const triggerLabel = isTeaOrSnack ? '特色茶歇' : (isAddStop ? '新增方案' : '局部调整');
+  const triggerIcon = isTeaOrSnack ? '🫖' : (isDining ? '🍲' : '🧭');
+
   if (!state.plannerProposalDockOpen) {
     return `
-      <button class="planner-proposal-trigger" type="button" data-action="open-planner-proposal" aria-label="打开局部调整预览">
-        <span class="planner-proposal-trigger-icon" aria-hidden="true">🧭</span>
-        <span><strong>局部调整</strong><small>等待你的决定</small></span>
+      <button class="planner-proposal-trigger" type="button" data-action="open-planner-proposal" aria-label="打开${dockTitle}">
+        <span class="planner-proposal-trigger-icon" aria-hidden="true">${triggerIcon}</span>
+        <span><strong>${triggerLabel}</strong><small>等待你的决定</small></span>
         <b>1</b>
       </button>
     `;
   }
   return `
-    <section class="planner-proposal-dock" role="dialog" aria-label="局部调整预览">
+    <section class="planner-proposal-dock" role="dialog" aria-label="${dockTitle}">
       <div class="planner-proposal-dock-head">
-        <div><span class="planner-proposal-kicker">TRIP DECISION</span><strong>局部调整预览</strong></div>
+        <div><span class="planner-proposal-kicker">${dockKicker}</span><strong>${dockTitle}</strong></div>
         <button class="planner-proposal-close" type="button" data-action="close-planner-proposal" aria-label="关闭方案预览">×</button>
       </div>
       <div class="planner-proposal-dock-body">${plannerProposalHtml(state.activeProposal)}</div>

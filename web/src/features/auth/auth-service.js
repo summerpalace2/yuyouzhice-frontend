@@ -3,24 +3,32 @@ import { request } from '../../shared/api/client.js';
 import { toast } from '../../shared/ui/toast.js';
 import { loadUserPlan, loadUserChats, saveUserChats, startGuestChatSession, getTripChatKey, loadGuestMemories } from '../../app-core/user-store.js';
 import { clearPageCache } from '../../app-core/page-cache.js';
+import { detachChatWorkspace } from '../trip-chat/chat-service.js';
+import { openSavedTrip } from '../trip-save/save-service.js';
+import { invalidateAuthentication, captureAuthentication, captureWorkspace } from '../../app-core/workspace-lifecycle.js';
 
 export async function restoreAuthSession(renderCallbacks = {}) {
   // 会话接口可能比首屏慢；记录启动时视图，避免请求返回游客状态时覆盖
   // 用户在等待期间主动点击的登录、注册或其它导航。
   const viewAtSessionCheck = state.view;
+  const authentication = captureAuthentication();
   try {
     const data = await request('/api/auth/session');
+    if (!authentication.owns()) return;
     if (data.authenticated) {
       state.user = data.user;
       state.csrfToken = data.csrfToken || null;
+      const restoration = captureWorkspace({ exact: true });
       try {
         const profileData = await request('/api/profile', { timeoutMs: 3000 });
+        if (!restoration.owns()) return;
         if (profileData && profileData.ok) {
           state.profile = profileData;
         }
       } catch {
         // silent
       }
+      if (!restoration.owns()) return;
     } else {
       state.user = null;
       state.csrfToken = null;
@@ -28,10 +36,34 @@ export async function restoreAuthSession(renderCallbacks = {}) {
       if (state.view === viewAtSessionCheck) state.view = 'guest-chat';
     }
 
+    if (!authentication.current()) return;
     const guestChat = !state.user && state.view === 'guest-chat';
     // 游客体验只恢复当前访客问答会话；不把 anonymous 下遗留的规划草稿
     // 塞进 chat stream 的 plannerSessionId / 行程上下文。
     const activePlan = state.user ? loadUserPlan(state.user.id) : null;
+    if (activePlan?.trip && activePlan.savedTripId) {
+      // Formal Trips have an authoritative workspace; a local copy alone cannot
+      // prove its transcript postdates a clear on another device.
+      const userId = state.user.id;
+      state.trip = null;
+      state.sessionId = null;
+      state.savedTripId = null;
+      state.activeProposal = null;
+      state.chatSessionId = null;
+      state.chatMessages = [];
+      state.chatMeta = null;
+      state.chatProposal = null;
+      state.chatWorkspace = null;
+      state.tripChatHistories = loadUserChats(userId);
+      state.view = 'trips';
+      await openSavedTrip(activePlan.savedTripId);
+      if (!authentication.current() || state.user?.id !== userId) return;
+      if (renderCallbacks.renderHeader) renderCallbacks.renderHeader();
+      if (renderCallbacks.renderView) renderCallbacks.renderView();
+      if (renderCallbacks.renderFloatingBtn) renderCallbacks.renderFloatingBtn();
+      if (state.user?.role === 'admin' && renderCallbacks.health) await renderCallbacks.health();
+      return;
+    }
     if (activePlan && activePlan.trip) {
       state.trip = activePlan.trip;
       state.sessionId = activePlan.sessionId;
@@ -67,12 +99,16 @@ export async function restoreAuthSession(renderCallbacks = {}) {
     if (renderCallbacks.renderFloatingBtn) renderCallbacks.renderFloatingBtn();
     if (state.user?.role === 'admin' && renderCallbacks.health) await renderCallbacks.health();
   } catch {
+    if (!authentication.current()) return;
     state.user = null;
     state.csrfToken = null;
   }
 }
 
 export async function logout(renderCallback) {
+  invalidateAuthentication();
+  detachChatWorkspace();
+  state.loading = false;
   if (state.user) {
     try { await request('/api/auth/logout', { method: 'POST' }); } catch { }
   }

@@ -1,5 +1,8 @@
-import { request } from '../../shared/api/client.js';
+import { resetConversationContext } from './chat-service.js';
+import { acknowledgeChatModeGuide, announceChatMode } from './chat-mode-guide.js';
+import { request as apiRequest } from '../../shared/api/client.js';
 import { saveGuestMemories } from '../../app-core/user-store.js';
+import { captureWorkspace } from '../../app-core/workspace-lifecycle.js';
 
 /**
  * 聊天工作区动作协调器。
@@ -37,8 +40,15 @@ export async function handleChatAction({
   applyPlannerProposal,
   planFromCurrent,
   scheduleTripMap,
-  invalidatePageCache
+  invalidatePageCache,
+  request = apiRequest
 } = {}) {
+  if (action === 'acknowledge-chat-mode-guide' || action === 'show-chat-mode-guide') {
+    state.chatModeGuideOpen = action === 'show-chat-mode-guide';
+    if (!state.chatModeGuideOpen) acknowledgeChatModeGuide(state.user?.id);
+    renderChatInDOM({ scrollToBottom: false }, renderView);
+    return true;
+  }
   if (action === 'select-stop') {
     const stopId = String(target.dataset.id || '').trim();
     if (!stopId) return true;
@@ -113,6 +123,7 @@ export async function handleChatAction({
     state.selectedStopId = stopId;
     state.activeDay = Number(target.dataset.day || 1);
     state.suggestionDismissed = false;
+    const switchedMode = state.chatMode !== 'planner';
     state.chatMode = 'planner';
     state.chatDockOpen = true;
     persistChatMode(state, saveUserPlan, persistTripWorkspace);
@@ -144,7 +155,8 @@ export async function handleChatAction({
     }
     renderFloatingBtn();
     renderChatInDOM({ scrollToBottom: true }, renderView);
-    toast(`已选中【${stopName}】，正在查询同片区可替换候选……`);
+    if (switchedMode) announceChatMode('planner', toast);
+    else toast(`已选中【${stopName}】，正在查询同片区可替换候选……`);
     await sendChatMessage({ inputOverride: `请推荐【${stopName}】的同片区可替换景点`, preserveInput: true, renderView, scheduleTripMap });
     return true;
   }
@@ -224,9 +236,7 @@ export async function handleChatAction({
     state.chatInput = action === 'switch-chat-mode' ? '' : String(target.dataset.prompt || '');
     persistChatMode(state, saveUserPlan, persistTripWorkspace);
     renderChatInDOM({ scrollToBottom: false }, renderView);
-    toast(action === 'switch-chat-mode'
-      ? '已切换到聊天，可以继续咨询景点、天气和出行建议。'
-      : '已切换到局部调整；原问题已放回输入框，请确认后发送。');
+    announceChatMode(state.chatMode, toast);
     return true;
   }
   if (action === 'request-other-proposals') {
@@ -234,7 +244,9 @@ export async function handleChatAction({
       toast('正在生成方案，请稍候。');
       return true;
     }
+    const switchedMode = state.chatMode !== 'planner';
     state.chatMode = 'planner';
+    if (switchedMode) announceChatMode('planner', toast);
     state.plannerProposalDockOpen = false;
     state.chatDockOpen = true;
     renderFloatingBtn();
@@ -253,15 +265,32 @@ export async function handleChatAction({
     return true;
   }
   if (action === 'dismiss-planner-proposal') {
+    const workspaceOwner = captureWorkspace({ exact: true });
+    const dismissedProposal = state.activeProposal;
+    const closeOnly = target?.dataset?.closeOnly === 'true';
+    if (!closeOnly) {
+      try { await resetConversationContext(); }
+      catch (error) {
+        if (workspaceOwner.owns()) toast(error?.message || '取消本轮调整失败，请稍后重试。');
+        return true;
+      }
+    }
+    if (!workspaceOwner.owns() || (state.activeProposal && state.activeProposal !== dismissedProposal)) return true;
     state.activeProposal = null;
     state.plannerProposalDockOpen = false;
     state.selectedOptionId = 'option-1';
     state.suggestionDismissed = false;
     renderChatInDOM({ scrollToBottom: false }, renderView);
-    toast('已取消本次调整预览，当前行程未改变。');
+    saveUserPlan(state.user?.id, { trip: state.trip, sessionId: state.sessionId, savedTripId: state.savedTripId,
+      prompt: state.prompt, view: 'planning', activeProposal: null, selectedOptionId: 'option-1' });
+    toast(closeOnly ? '已关闭提示。' : '已取消本轮调整，当前行程未改变。');
     return true;
   }
   if (action === 'reset-chat') {
+    const workspaceOwner = captureWorkspace({ exact: true });
+    const resetOwner = {sessionId:state.sessionId,tripId:state.savedTripId,userId:state.user?.id,chatKey:state.chatSessionId};
+    try { await resetConversationContext(); } catch { toast('后台对话上下文暂未清除，请稍后重试。'); return true; }
+    if (!workspaceOwner.owns() || state.sessionId !== resetOwner.sessionId || state.savedTripId !== resetOwner.tripId || state.user?.id !== resetOwner.userId || state.chatSessionId !== resetOwner.chatKey) return true;
     // A formal Trip owns exactly one chat stream; clearing it must preserve its stable key.
     const chatKey = state.chatSessionId || getTripChatKey(state.savedTripId, state.sessionId);
     state.chatSessionId = chatKey;
@@ -301,9 +330,11 @@ export async function handleChatAction({
     if (action === 'quick-ai-action') {
       if (target.dataset.mode === 'planner' && state.chatMode !== 'planner') {
         state.chatMode = 'planner';
+        announceChatMode('planner', toast);
         renderChatInDOM({ scrollToBottom: false }, renderView);
       } else if (target.dataset.mode === 'chat' && state.chatMode !== 'chat') {
         state.chatMode = 'chat';
+        announceChatMode('chat', toast);
         renderChatInDOM({ scrollToBottom: false }, renderView);
       }
     }
@@ -332,160 +363,122 @@ export async function handleChatAction({
     const chipPayload = String(chipBtn.dataset.chipPayload || '').trim();
     const chipLabel = String(chipBtn.dataset.chipLabel || '').trim();
 
-    // 标记在 message 数据模型中，确保后续 renderChatInDOM 重绘时依旧保持已点击/已应用态
-    for (const msg of (state.chatMessages || [])) {
-      if (Array.isArray(msg.actionableSuggestions)) {
-        for (const sug of msg.actionableSuggestions) {
-          if (sug.action === chipAction && (sug.payload === chipPayload || sug.label === chipLabel)) {
-            sug.applied = true;
-          }
+    const matchingSuggestions = (state.chatMessages || []).flatMap(msg => msg.actionableSuggestions || [])
+      .filter(sug => sug.action === chipAction && (sug.payload === chipPayload || sug.label === chipLabel));
+
+    if (chipAction === 'save_slot_preference' || chipAction === 'save_memory') {
+      const workspaceOwner = captureWorkspace();
+      const sourceMessages = state.chatMessages;
+      const sourceChatKey = state.chatSessionId;
+      const sourceSessionId = state.sessionId;
+      const sourceTripId = state.savedTripId;
+      const ownsMemoryReceipt = () => workspaceOwner.owns()
+        && state.chatMessages === sourceMessages && state.chatSessionId === sourceChatKey
+        && state.sessionId === sourceSessionId && state.savedTripId === sourceTripId;
+      const originalHtml = chipBtn.innerHTML;
+      let slot;
+      let tag;
+      if (chipAction === 'save_slot_preference') {
+        slot = 'dining';
+        tag = chipLabel;
+        try {
+          const parsed = JSON.parse(chipPayload);
+          slot = parsed.slot;
+          tag = String(parsed.tag || '').trim();
+        } catch {
+          // Historical chips used a bracketed label instead of JSON. Parse the
+          // label's structure, without guessing its meaning from food/place words.
+          tag = chipLabel.match(/【([^】]+)】/)?.[1]?.trim() || '';
+          slot = /(?:景点|出行)偏好/.test(chipLabel) ? 'attraction' : 'dining';
         }
       }
-    }
-
-    if (chipAction === 'save_slot_preference') {
-      let slot = 'dining';
-      let tag = chipLabel;
+      const memoryContent = chipAction === 'save_memory' ? (chipPayload || chipLabel) : `偏好${tag}`;
+      const category = chipAction === 'save_memory' ? 'CUSTOM' : (slot === 'dining' ? 'DIET' : 'INTEREST');
       try {
-        const parsed = JSON.parse(chipPayload);
-        if (parsed.slot) slot = parsed.slot;
-        if (parsed.tag) tag = parsed.tag;
-      } catch (e) {
-        if (chipLabel.includes('烧烤')) tag = '烧烤';
-        else if (chipLabel.includes('甜品') || chipLabel.includes('甜食')) tag = '甜品糖水';
-        else if (chipLabel.includes('火锅')) tag = '老火锅';
-        else if (chipLabel.includes('老茶馆') || chipLabel.includes('喝茶')) tag = '老茶馆';
-        else if (chipLabel.includes('咖啡')) tag = '特色咖啡';
-        else if (chipLabel.includes('小吃')) tag = '特色小吃';
-        else if (chipLabel.includes('夜景')) tag = '山城夜景';
-        else if (chipLabel.includes('室内')) tag = '室内场馆';
-      }
-
-      try {
+        if (!memoryContent.trim() || (chipAction === 'save_slot_preference' && (!tag || !['dining', 'attraction'].includes(slot)))) {
+          throw new Error('偏好内容无效，请重新确认。');
+        }
         chipBtn.disabled = true;
         chipBtn.classList.add('is-active-loading');
         chipBtn.innerHTML = '<span class="chat-action-chip-icon">⏳</span><span class="chat-action-chip-label">正在保存偏好...</span>';
 
+        let savedItem;
         if (!state.user) {
-          const key = slot === 'dining' ? 'diningSlots' : 'attractionSlots';
-          const currentList = Array.isArray(state.profile?.[key]) ? state.profile[key] : [];
-          if (!currentList.includes(tag)) {
-            state.profile = {
-              ...(state.profile || {}),
-              [key]: [...currentList, tag]
-            };
+          savedItem = (state.profile?.memories || []).find(m => m.content === memoryContent && m.category === category)
+            || { id: `guest-mem-${Date.now()}`, content: memoryContent, category, status: 'CONFIRMED', sourceType: 'GUEST_LOCAL', createdAt: Date.now() };
+        } else {
+          const response = await request('/api/memories', {
+            method: 'POST',
+            body: JSON.stringify({ content: memoryContent, category, sourceType: 'CHAT_CONFIRMED' })
+          });
+          savedItem = response?.memory || response?.data;
+          if (response?.ok === false || !savedItem?.id || !savedItem?.content) {
+            throw new Error('服务端未确认偏好保存，请重试。');
           }
-          state.useMemoriesInPlan = true;
-          invalidatePageCache?.('profile');
-          toast(`已将【${tag}】加入${slot === 'dining' ? '美食' : '出行'}偏好！`);
-          chipBtn.classList.remove('is-active-loading');
-          chipBtn.classList.add('is-applied');
-          chipBtn.innerHTML = `<span class="chat-action-chip-icon">✓</span><span class="chat-action-chip-label">已加入${slot === 'dining' ? '美食' : '出行'}偏好</span>`;
-          renderChatInDOM({ scrollToBottom: false }, renderView);
-          if (typeof window !== 'undefined') {
-            void request('/api/preferences/slots', {
-              method: 'POST',
-              body: JSON.stringify({ slot, tag, action: 'add' })
-            }).catch(() => {});
-          }
-          return true;
         }
 
-        const res = await request('/api/preferences/slots', {
-          method: 'POST',
-          body: JSON.stringify({ slot, tag, action: 'add' })
-        });
-
-        if (state.profile) {
-          state.profile.diningSlots = res?.diningSlots || [];
-          state.profile.attractionSlots = res?.attractionSlots || [];
+        if (!ownsMemoryReceipt()) return true;
+        const current = state.profile?.memories || [];
+        state.profile = { ...(state.profile || {}), memories: [savedItem, ...current.filter(m => m.id !== savedItem.id)] };
+        if (!state.user) {
+          saveGuestMemories(state.profile.memories);
+          // Older guest drafts still read these tags. Cloud planning reads confirmed memories.
+          if (slot) {
+            const key = slot === 'dining' ? 'diningSlots' : 'attractionSlots';
+            state.profile[key] = [...new Set([...(state.profile[key] || []), tag])];
+          }
         }
+        let refreshFailed = false;
+        if (state.user) {
+          try {
+            const profile = await request('/api/profile');
+            if (profile?.ok === false || !Array.isArray(profile?.memories)
+                || !profile.memories.some(m => m.id === savedItem.id)) {
+              throw new Error('档案读取尚未确认新记忆');
+            }
+            if (!ownsMemoryReceipt()) return true;
+            state.profile = profile;
+          } catch {
+            refreshFailed = true;
+          }
+        }
+
+        if (!ownsMemoryReceipt()) return true;
+        matchingSuggestions.forEach(sug => { sug.applied = true; sug.savedMemoryId = savedItem.id; });
+        const chatKey = state.chatSessionId || getTripChatKey?.(state.savedTripId, state.sessionId);
+        if (chatKey) {
+          state.tripChatHistories = { ...(state.tripChatHistories || {}), [chatKey]: state.chatMessages };
+          saveUserChats?.(state.user?.id, state.tripChatHistories);
+        }
+        state.memoryCandidate = null;
         state.useMemoriesInPlan = true;
         invalidatePageCache?.('profile');
-        toast(`已将【${tag}】加入${slot === 'dining' ? '美食' : '出行'}偏好！`);
         chipBtn.classList.remove('is-active-loading');
         chipBtn.classList.add('is-applied');
-        chipBtn.innerHTML = `<span class="chat-action-chip-icon">✓</span><span class="chat-action-chip-label">已加入${slot === 'dining' ? '美食' : '出行'}偏好</span>`;
+        chipBtn.innerHTML = '<span class="chat-action-chip-icon">✓</span><span class="chat-action-chip-label">已保存偏好</span>';
+        toast(!state.user ? `已在本地记住【${memoryContent}】，登录后可同步。`
+          : (refreshFailed ? '偏好已保存，档案刷新暂时失败，请稍后重新打开档案。' : `已将【${memoryContent}】保存至旅行档案并更新规划画像。`));
         renderChatInDOM({ scrollToBottom: false }, renderView);
       } catch (err) {
+        if (!ownsMemoryReceipt()) return true;
+        matchingSuggestions.forEach(sug => { sug.applied = false; delete sug.savedMemoryId; });
         chipBtn.disabled = false;
         chipBtn.classList.remove('is-active-loading');
-        toast(err?.message || '偏好保存失败，请稍后重试。');
+        chipBtn.classList.remove('is-applied');
+        chipBtn.innerHTML = originalHtml;
+        toast(err?.status === 401 ? '登录已失效，请重新登录后保存偏好。' : (err?.message || '偏好保存失败，请稍后重试。'));
       }
       return true;
     }
 
-    if (chipAction === 'save_memory') {
-      const memoryContent = chipPayload || chipLabel;
-      try {
-        chipBtn.disabled = true;
-        chipBtn.classList.add('is-active-loading');
-        chipBtn.innerHTML = `<span class="chat-action-chip-icon">⏳</span><span class="chat-action-chip-label">正在沉淀...</span>`;
-
-        if (!state.user) {
-          const guestMemory = {
-            id: `guest-mem-${Date.now()}`,
-            content: memoryContent,
-            category: 'CUSTOM',
-            sourceType: 'GUEST_LOCAL',
-            createdAt: Date.now()
-          };
-          const current = state.profile?.memories || [];
-          state.profile = { ...(state.profile || {}), memories: [guestMemory, ...current] };
-          saveGuestMemories(state.profile.memories);
-          state.memoryCandidate = null;
-          toast(`已在本地记住【${memoryContent}】，登录后可同步至云端偏好。`);
-          chipBtn.classList.remove('is-active-loading');
-          chipBtn.classList.add('is-applied');
-          chipBtn.innerHTML = `<span class="chat-action-chip-icon">✓</span><span class="chat-action-chip-label">已沉淀至档案</span>`;
-          renderChatInDOM({ scrollToBottom: false }, renderView);
-          return true;
-        }
-
-        const res = await request('/api/memories', {
-          method: 'POST',
-          body: JSON.stringify({
-            content: memoryContent,
-            category: 'CUSTOM',
-            sourceType: 'CHAT_CONFIRMED'
-          })
-        });
-        const savedItem = res?.data || res?.memory || {
-          id: `mem-${Date.now()}`,
-          content: memoryContent,
-          category: 'CUSTOM',
-          sourceType: 'CHAT_CONFIRMED',
-          createdAt: Date.now()
-        };
-        const current = state.profile?.memories || [];
-        if (!current.some((m) => m.content === memoryContent)) {
-          state.profile = { ...(state.profile || {}), memories: [savedItem, ...current] };
-        }
-        if (state.memoryCandidate) {
-          state.memoryCandidate = null;
-        }
-        invalidatePageCache?.('profile');
-        toast(`已将【${memoryContent}】沉淀至旅行档案！`);
-        chipBtn.classList.remove('is-active-loading');
-        chipBtn.classList.add('is-applied');
-        chipBtn.innerHTML = `<span class="chat-action-chip-icon">✓</span><span class="chat-action-chip-label">已沉淀至档案</span>`;
-        renderChatInDOM({ scrollToBottom: false }, renderView);
-      } catch (err) {
-        chipBtn.disabled = false;
-        chipBtn.classList.remove('is-active-loading');
-        if (err?.status === 401) {
-          toast('登录后即可永久将个人偏好沉淀至旅行档案。');
-        } else {
-          toast(err?.message || '沉淀档案失败，请稍后重试。');
-        }
-      }
-      return true;
-    }
+    const modeChanged = state.view === 'planning' && state.trip && chipAction !== 'chat_info' && state.chatMode !== 'planner';
+    matchingSuggestions.forEach(sug => { sug.applied = true; });
 
     if (state.view === 'planning' && state.trip && chipAction !== 'chat_info') {
       if (state.chatMode !== 'planner') {
         state.chatMode = 'planner';
         persistChatMode(state, saveUserPlan, persistTripWorkspace);
+        renderChatInDOM({ scrollToBottom: false }, renderView);
       }
     }
     const promptText = chipPayload || chipLabel;
@@ -493,7 +486,8 @@ export async function handleChatAction({
       chipBtn.disabled = true;
       chipBtn.classList.add('is-applied');
       chipBtn.innerHTML = `<span class="chat-action-chip-icon">✓</span><span class="chat-action-chip-label">已发起调整...</span>`;
-      toast(`正在为你执行：${chipLabel}...`);
+      if (modeChanged) announceChatMode('planner', toast);
+      else toast(`正在为你执行：${chipLabel}...`);
       await sendChatMessage({ inputOverride: promptText, preserveInput: true, renderView, scheduleTripMap });
     }
     return true;

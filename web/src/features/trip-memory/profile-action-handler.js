@@ -37,6 +37,9 @@ export async function handleProfileAction({
       const res = await request('/api/preferences/prepend-prompt');
       if (res && res.ok && state.profile) {
         state.profile.profilePrependPrompt = res.prependPrompt || '';
+        state.profile.userCustomizedPrompt = res.userCustomizedPrompt ?? state.profile.userCustomizedPrompt ?? '';
+        state.profile.legacyUserCustomizedPrompt = res.legacyUserCustomizedPrompt || '';
+        state.profile.manualPromptNeedsReview = res.manualPromptNeedsReview === true;
         refreshSlotsPanel();
       }
     } catch (e) {
@@ -52,10 +55,6 @@ export async function handleProfileAction({
   if (action === 'save-prepend-prompt') {
     const editor = document.querySelector('#prepend-prompt-editor');
     const text = String(editor ? editor.value : '').trim();
-    if (!text) {
-      toast('提示词内容不能为空');
-      return true;
-    }
     try {
       const data = await request('/api/preferences/prepend-prompt', {
         method: 'POST',
@@ -63,18 +62,20 @@ export async function handleProfileAction({
       });
       if (state.profile) {
         state.profile.profilePrependPrompt = data.prependPrompt || text;
-        state.profile.userCustomizedPrompt = data.prependPrompt || text;
+        state.profile.userCustomizedPrompt = data.userCustomizedPrompt ?? text;
+        state.profile.manualPromptNeedsReview = data.manualPromptNeedsReview === true;
       }
       state.useMemoriesInPlan = true;
       markPageDataFresh?.('profile');
-      toast('AI 规划前置提示词已保存生效！');
+      refreshSlotsPanel();
+      toast(text ? '手动备注已保存，自动画像会随记忆更新。' : '手动备注已清除。');
     } catch (error) {
       toast(error?.message || '保存提示词失败');
     }
     return true;
   }
   if (action === 'resynthesize-prepend-prompt') {
-    if (!window.confirm('重新提炼将基于全部近期记忆重新生成前置提示词，是否继续？')) {
+    if (!window.confirm('重新提炼会刷新自动画像并保留已保存的手动备注，是否继续？')) {
       return true;
     }
     try {
@@ -84,16 +85,19 @@ export async function handleProfileAction({
       });
       if (state.profile) {
         state.profile.profilePrependPrompt = data.prependPrompt || '';
+        state.profile.userCustomizedPrompt = data.userCustomizedPrompt ?? state.profile.userCustomizedPrompt ?? '';
+        state.profile.manualPromptNeedsReview = data.manualPromptNeedsReview === true;
       }
       const editor = document.querySelector('#prepend-prompt-editor');
       if (editor) {
-        editor.value = data.prependPrompt || '';
+        editor.value = state.profile?.userCustomizedPrompt || '';
       }
       const counter = document.querySelector('#prepend-prompt-count');
       if (counter) {
-        counter.textContent = String((data.prependPrompt || '').length);
+        counter.textContent = String((state.profile?.userCustomizedPrompt || '').length);
       }
       markPageDataFresh?.('profile');
+      refreshSlotsPanel();
       toast('已根据全部旅行记忆重新提炼前置提示词！');
     } catch (error) {
       toast(error?.message || '重新提炼失败');

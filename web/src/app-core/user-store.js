@@ -10,6 +10,17 @@
 
 const PREFIX_PLAN = 'yuyouzhice_active_plan_';
 const PREFIX_CHATS = 'yuyouzhice_chat_histories_';
+const PREFIX_WORKSPACE = 'yuyouzhice_chat_workspace_';
+
+export function loadChatWorkspaceMeta(userId, chatKey) {
+  try { return JSON.parse(window.localStorage.getItem(`${PREFIX_WORKSPACE}${getUserKey(userId)}_${chatKey}`) || 'null'); }
+  catch { return null; }
+}
+
+export function saveChatWorkspaceMeta(userId, chatKey, metadata) {
+  try { window.localStorage.setItem(`${PREFIX_WORKSPACE}${getUserKey(userId)}_${chatKey}`, JSON.stringify(metadata)); }
+  catch { /* Offline metadata is best effort; server revision remains authoritative. */ }
+}
 
 /**
  * 游客会话只在当前页面生命周期内有效。重新打开网站或重新进入游客页时
@@ -32,6 +43,21 @@ export function getGuestChatSessionId() {
 export function startGuestChatSession() {
   activeGuestChatSessionId = createGuestChatSessionId();
   return activeGuestChatSessionId;
+}
+
+// Model-memory IDs can rotate while the visible chat history retains its stable UI key.
+const memoryEpochs = new Map();
+export function getChatMemorySessionId(chatKey, userId) {
+  const key = `yuyouzhice_chat_epoch_${getUserKey(userId)}_${String(chatKey || 'default')}`;
+  if (memoryEpochs.has(key)) return memoryEpochs.get(key);
+  try { const epoch = window.localStorage?.getItem(key); if (epoch) { memoryEpochs.set(key,epoch); return epoch; } } catch {}
+  return chatKey;
+}
+export function resetChatMemorySessionId(chatKey, userId) {
+  const key = `yuyouzhice_chat_epoch_${getUserKey(userId)}_${String(chatKey || 'default')}`;
+  const epoch = createGuestChatSessionId().replace('guest-chat-', 'chat-epoch-');
+  memoryEpochs.set(key,epoch); try { window.localStorage?.setItem(key,epoch); } catch {}
+  return epoch;
 }
 
 const PREFIX_GUEST_MEMORIES = 'yuyouzhice_guest_memories';

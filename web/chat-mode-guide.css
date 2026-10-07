@@ -1,0 +1,38 @@
+.chat-mode-guide {
+  padding: 14px 16px;
+  margin-bottom: 10px;
+  border: 2px solid #d97736;
+  border-radius: 14px;
+  background: #fff7ed;
+  color: #713b20;
+  line-height: 1.6;
+}
+.chat-mode-guide > strong { font-size: 16px; }
+.chat-mode-guide p { margin: 6px 0; font-size: 13px; }
+.chat-mode-guide > div { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.chat-mode-guide small { font-size: 12px; }
+.chat-mode-help { flex-shrink: 0; border: 0; background: transparent; color: #9a3412; text-decoration: underline; font-size: 12px; cursor: pointer; }
+.toast.toast-mode-switch {
+  animation: none;
+  transition: none;
+  position: fixed;
+  top: 84px;
+  bottom: auto;
+  left: 50%;
+  right: auto;
+  transform: translateX(-50%);
+  width: min(440px, calc(100vw - 32px));
+  box-sizing: border-box;
+  padding: 18px 22px;
+  background: #fff7ed;
+  color: #713b20;
+  border: 2px solid #c65a2b;
+  border-radius: 16px;
+  box-shadow: 0 12px 40px #713b2033;
+  z-index: 10000;
+  pointer-events: none;
+  text-align: center;
+  line-height: 1.6;
+}
+.toast-mode-switch strong { display: block; font-size: 21px; margin-bottom: 5px; }
+.toast-mode-switch span { display: block; font-size: 14px; }

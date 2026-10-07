@@ -1,12 +1,29 @@
+import { proposalUnavailable } from './proposal-availability.js';
 import { state } from '../../app-core/state.js';
 import { deviceId, plannerIdempotencyKey, request } from '../../shared/api/client.js';
 import { renderMarkdownStreaming } from '../../shared/lib/markdown.js';
 import { toast } from '../../shared/ui/toast.js';
 import { renderChatInDOM } from './chat-panel.js';
-import { saveUserChats, saveUserPlan, getGuestChatSessionId, getTripChatKey } from '../../app-core/user-store.js';
-import { persistTripWorkspace } from '../trip-workspace/workspace-service.js';
+import { saveUserChats, saveUserPlan, getGuestChatSessionId, getTripChatKey, getChatMemorySessionId, resetChatMemorySessionId } from '../../app-core/user-store.js';
+import { persistTripWorkspace, adoptTripWorkspace } from '../trip-workspace/workspace-service.js';
+import { invalidateWorkspace, captureWorkspace } from '../../app-core/workspace-lifecycle.js';
+import { beginTripMutation, acceptTripReceipt, finishTripMutation } from '../../entities/trip/trip-mutation.js';
 
 let activeChatAbortController = null;
+let chatGeneration = 0;
+let activeApplyPromise = null;
+
+export function detachChatWorkspace() {
+  invalidateWorkspace();
+  // Submitted server writes may complete; their receipts no longer own this UI.
+  chatGeneration++;
+  activeChatAbortController?.abort();
+  activeChatAbortController = null;
+  activeApplyPromise = null;
+  state.tripMutationTicket = null;
+  state.applyPending = false;
+  state.chatLoading = false;
+}
 
 function persistChatUiState() {
   if (!state.chatSessionId) return;
@@ -47,6 +64,8 @@ async function queueTravelMemoryObservation(message) {
 }
 
 export function cancelChatMessage({ renderView } = {}) {
+  if (activeApplyPromise) { toast('调整正在应用，停止回复不会撤销已提交的应用。'); return; }
+  chatGeneration++;
   if (activeChatAbortController) {
     activeChatAbortController.abort();
     activeChatAbortController = null;
@@ -60,6 +79,25 @@ export function cancelChatMessage({ renderView } = {}) {
   persistChatUiState();
   renderChatInDOM({ scrollToBottom: false }, renderView);
   toast('已停止本次回复。');
+}
+
+export async function resetConversationContext() {
+  if (activeApplyPromise) throw new Error('调整正在应用，请等待完成后清空聊天。');
+  cancelChatMessage();
+  if (!state.sessionId || !state.trip) {
+    state.pendingIntent = null;
+    const chatKey = !state.user && state.view === 'guest-chat' ? getGuestChatSessionId() : (state.chatSessionId || getTripChatKey(state.savedTripId,state.sessionId));
+    resetChatMemorySessionId(chatKey,state.user?.id); return;
+  }
+  const owner = captureWorkspace({ exact: true });
+  const result = await request('/api/planner/conversation', { method: 'POST', body: JSON.stringify({
+    sessionId: state.sessionId, baseRevision: Number(state.trip.version || 1), sessionAccessToken: state.sessionAccessToken || '',
+    message: '', context: { resetConversation: true, activeDay: Number(state.activeDay || 1) }
+  }) });
+  if (owner.owns()) {
+    state.pendingIntent = null;
+    if (result.workspace) adoptTripWorkspace(result.workspace, owner);
+  }
 }
 
 export async function readChatStream(message, sessionId, mode, context = {}, onEvent, signal) {
@@ -80,10 +118,11 @@ export async function readChatStream(message, sessionId, mode, context = {}, onE
   });
   let response;
   try {
-    response = await fetch(`/api/chat/stream?${params.toString()}`, {
-      method: 'GET',
+    response = await fetch('/api/chat/stream', {
+      method: 'POST',
+      body: JSON.stringify(Object.fromEntries(params)),
       credentials: 'same-origin',
-      headers: { accept: 'text/event-stream', 'x-yuyouzhice-device': deviceId() },
+      headers: { accept: 'text/event-stream', 'content-type': 'application/json', 'x-yuyouzhice-device': deviceId(), ...(state.csrfToken ? { 'x-yuyouzhice-csrf': state.csrfToken } : {}) },
       signal
     });
   } catch (netErr) {
@@ -268,6 +307,182 @@ export function deduplicateSuggestions(chips) {
   return result;
 }
 
+/**
+ * 确保行动建议卡片中必定包含沉淀偏好/档案的动作：
+ * 如果检测到用户有明确偏好倾向（通过 detectedPreference 或微调动作类型/文案语义），
+ * 但卡片列表中尚未包含 save_slot_preference 或 save_memory，
+ * 则自动根据偏好语义合成对应的偏好保存卡片，确保用户界面绝不缺失“沉淀至档案”入口。
+ */
+export function ensurePreferenceSuggestion(chips, detectedPreference = null) {
+  const list = Array.isArray(chips) ? [...chips] : [];
+  const hasPrefAction = list.some((c) => c.action === 'save_memory' || c.action === 'save_slot_preference');
+  if (hasPrefAction) {
+    return deduplicateSuggestions(list);
+  }
+
+  // 1. 优先根据 detectedPreference 补充
+  if (detectedPreference?.trait) {
+    const trait = String(detectedPreference.trait);
+    if (/火锅|辣/.test(trait)) {
+      list.push({
+        action: 'save_slot_preference',
+        icon: '✦',
+        label: '将【老火锅】加入美食偏好',
+        payload: JSON.stringify({ slot: 'dining', tag: '老火锅' })
+      });
+      return deduplicateSuggestions(list);
+    }
+    if (/甜/.test(trait)) {
+      list.push({
+        action: 'save_slot_preference',
+        icon: '✦',
+        label: '将【甜品糖水】加入美食偏好',
+        payload: JSON.stringify({ slot: 'dining', tag: '甜品糖水' })
+      });
+      return deduplicateSuggestions(list);
+    }
+    if (/清淡|热汤|少辣/.test(trait)) {
+      list.push({
+        action: 'save_slot_preference',
+        icon: '✦',
+        label: '将【清淡少辣】加入美食偏好',
+        payload: JSON.stringify({ slot: 'dining', tag: '清淡少辣' })
+      });
+      return deduplicateSuggestions(list);
+    }
+    if (/少走路|平路|步缓/.test(trait)) {
+      list.push({
+        action: 'save_slot_preference',
+        icon: '✦',
+        label: '将【少爬坡少走路】加入出行偏好',
+        payload: JSON.stringify({ slot: 'attraction', tag: '少爬坡少走路' })
+      });
+      return deduplicateSuggestions(list);
+    }
+    if (/长辈|老人/.test(trait)) {
+      list.push({
+        action: 'save_memory',
+        icon: '✦',
+        label: '将【同行有长辈需适老关照】沉淀至档案',
+        payload: '同行有长辈，优先适老舒适与休息设施'
+      });
+      return deduplicateSuggestions(list);
+    }
+    if (/亲子|儿童|娃/.test(trait)) {
+      list.push({
+        action: 'save_memory',
+        icon: '✦',
+        label: '将【亲子出行需兼顾儿童】沉淀至档案',
+        payload: '家庭亲子出行，注重儿童友好与推车平顺'
+      });
+      return deduplicateSuggestions(list);
+    }
+    if (/夜景/.test(trait)) {
+      list.push({
+        action: 'save_slot_preference',
+        icon: '✦',
+        label: '将【山城夜景】加入景点偏好',
+        payload: JSON.stringify({ slot: 'attraction', tag: '山城夜景' })
+      });
+      return deduplicateSuggestions(list);
+    }
+    if (/人文|历史|古迹/.test(trait)) {
+      list.push({
+        action: 'save_slot_preference',
+        icon: '✦',
+        label: '将【人文历史】加入景点偏好',
+        payload: JSON.stringify({ slot: 'attraction', tag: '人文历史' })
+      });
+      return deduplicateSuggestions(list);
+    }
+    if (/室内|避雨/.test(trait)) {
+      list.push({
+        action: 'save_slot_preference',
+        icon: '✦',
+        label: '将【室内场馆】加入景点偏好',
+        payload: JSON.stringify({ slot: 'attraction', tag: '室内场馆' })
+      });
+      return deduplicateSuggestions(list);
+    }
+  }
+
+  // 2. 根据已有的微调行动卡片语义补充
+  const combinedText = list.map((c) => `${c.action} ${c.label} ${c.payload}`).join(' ');
+  if (/火锅|老火锅|重辣|红汤|麻辣|吃辣|辣味|川菜/.test(combinedText)) {
+    list.push({
+      action: 'save_slot_preference',
+      icon: '✦',
+      label: '将【老火锅】加入美食偏好',
+      payload: JSON.stringify({ slot: 'dining', tag: '老火锅' })
+    });
+  } else if (/甜点|甜食|甜品|糖水|解辣糖水|冰粉|凉糕/.test(combinedText)) {
+    list.push({
+      action: 'save_slot_preference',
+      icon: '✦',
+      label: '将【甜品糖水】加入美食偏好',
+      payload: JSON.stringify({ slot: 'dining', tag: '甜品糖水' })
+    });
+  } else if (/烧烤|烤串|烤鱼/.test(combinedText)) {
+    list.push({
+      action: 'save_slot_preference',
+      icon: '✦',
+      label: '将【烧烤】加入美食偏好',
+      payload: JSON.stringify({ slot: 'dining', tag: '烧烤' })
+    });
+  } else if (/少走|少台阶|平路|低步行|懒得走|脚酸|replan_pace/.test(combinedText)) {
+    list.push({
+      action: 'save_slot_preference',
+      icon: '✦',
+      label: '将【少爬坡少走路】加入出行偏好',
+      payload: JSON.stringify({ slot: 'attraction', tag: '少爬坡少走路' })
+    });
+  } else if (/茶馆|喝茶|盖碗茶/.test(combinedText)) {
+    list.push({
+      action: 'save_slot_preference',
+      icon: '✦',
+      label: '将【老茶馆】加入美食偏好',
+      payload: JSON.stringify({ slot: 'dining', tag: '老茶馆' })
+    });
+  } else if (/咖啡|下午茶/.test(combinedText)) {
+    list.push({
+      action: 'save_slot_preference',
+      icon: '✦',
+      label: '将【特色咖啡】加入美食偏好',
+      payload: JSON.stringify({ slot: 'dining', tag: '特色咖啡' })
+    });
+  } else if (/夜景|两江|夜色/.test(combinedText)) {
+    list.push({
+      action: 'save_slot_preference',
+      icon: '✦',
+      label: '将【山城夜景】加入景点偏好',
+      payload: JSON.stringify({ slot: 'attraction', tag: '山城夜景' })
+    });
+  } else if (/人文|历史|文博|古迹|老街|博物馆/.test(combinedText)) {
+    list.push({
+      action: 'save_slot_preference',
+      icon: '✦',
+      label: '将【人文历史】加入景点偏好',
+      payload: JSON.stringify({ slot: 'attraction', tag: '人文历史' })
+    });
+  } else if (/室内|避雨|indoor_mode/.test(combinedText)) {
+    list.push({
+      action: 'save_slot_preference',
+      icon: '✦',
+      label: '将【室内场馆】加入景点偏好',
+      payload: JSON.stringify({ slot: 'attraction', tag: '室内场馆' })
+    });
+  } else if (/拍照|摄影|机位|photo_mode/.test(combinedText)) {
+    list.push({
+      action: 'save_slot_preference',
+      icon: '✦',
+      label: '将【摄影出片】加入景点偏好',
+      payload: JSON.stringify({ slot: 'attraction', tag: '摄影出片' })
+    });
+  }
+
+  return deduplicateSuggestions(list);
+}
+
 export async function sendChatMessage(options = {}, maybePreserveInput = false) {
   let opts = options;
   if (typeof options === 'string') {
@@ -290,6 +505,7 @@ export async function sendChatMessage(options = {}, maybePreserveInput = false) 
     toast('聊天请求初始化失败，请重试。');
     return;
   }
+  if (usePlannerChannel && !state.sessionId) state.sessionId = state.savedTripId || state.trip?.id || null;
   state.chatRoute = usePlannerChannel ? 'planner' : 'chat';
   console.info('[CHAT_ROUTE]', {
     channel: state.chatRoute,
@@ -314,13 +530,25 @@ export async function sendChatMessage(options = {}, maybePreserveInput = false) 
   persistChatUiState();
   void queueTravelMemoryObservation(input);
   activeChatAbortController?.abort();
-  activeChatAbortController = new AbortController();
+  const controller = new AbortController();
+  activeChatAbortController = controller;
+  const generation = ++chatGeneration;
+  const requestSessionId = state.sessionId;
+  const requestTripId = state.savedTripId;
+  const requestVersion = Number(state.trip?.version || 1);
+  const requestUserId = state.user?.id;
+  const requestDay = Number(state.activeDay || 1), requestStopId = state.selectedStopId || null;
+  const requestPinned = JSON.stringify(Array.from(state.pinnedStopIds || []).sort());
+  const owns = () => generation === chatGeneration && !controller.signal.aborted
+    && state.sessionId === requestSessionId && state.savedTripId === requestTripId && state.user?.id === requestUserId
+    && Number(state.trip?.version || 1) === requestVersion;
   state.chatLoading = true;
   renderChatInDOM({ scrollToBottom: true }, renderView);
   const activeStop = state.trip?.days?.flatMap((day) => day.stops || [])
     .find((stop) => stop.id === state.selectedStopId);
   const activeStopName = activeStop?.name || '';
 
+  try {
   // 1. 详情页规划微调会话通道：全量自然语言统一路由至服务端语义处理入口，不再通过前端关键词正则拦截
   if (usePlannerChannel) {
     if (!state.sessionId) {
@@ -352,18 +580,33 @@ export async function sendChatMessage(options = {}, maybePreserveInput = false) 
       }
     }
 
+    const pending = state.activeProposal;
+    if (pending && !proposalUnavailable(pending, state.selectedOptionId || 'option-1') && pending.requestMessage === input
+        && pending.requestPinned === JSON.stringify(Array.from(state.pinnedStopIds || []).sort())
+        && pending.requestDay === Number(state.activeDay || 1) && pending.requestStopId === (state.selectedStopId || null)
+        && Number(pending.baseRevision) === Number(state.trip?.version || 1) && Number(pending.expiresAt) > Date.now()) {
+      state.plannerProposalDockOpen = true;
+      assistant.content = '这项调整已有待确认预览，请核对具体改动并点击“确认应用”。目前还没有修改行程。';
+      assistant.pending = false;
+      state.chatLoading = false;
+      persistConversationUiState();
+      renderChatInDOM({ scrollToBottom: true }, renderView);
+      return;
+    }
+
     try {
       const convRes = await request('/api/planner/conversation', {
         method: 'POST',
-        signal: activeChatAbortController.signal,
+        signal: controller.signal,
         body: JSON.stringify({
           sessionId: state.sessionId,
           planId: state.sessionId,
           baseRevision: state.trip ? Number(state.trip.version || 1) : 1,
           message: input,
           context: {
-            activeDay: Number(state.activeDay || 1),
-            selectedStopId: state.selectedStopId || null,
+            activeDay: requestDay,
+            pendingIntentId: state.pendingIntent?.intentId || null,
+            selectedStopId: requestStopId,
             selectedStopIds: Array.from(state.selectedStopIds || []),
             activeProposalId: state.activeProposal ? state.activeProposal.proposalId : null,
             pinnedStopIds: Array.from(state.pinnedStopIds || [])
@@ -372,6 +615,8 @@ export async function sendChatMessage(options = {}, maybePreserveInput = false) 
           idempotencyKey: plannerIdempotencyKey('planner-conversation')
         })
       });
+      if (!owns()) { assistant.pending = false; return; }
+      state.pendingIntent = convRes.pendingIntent || null;
       setPlannerChatMeta(convRes);
 
       if (convRes.legacyMode || convRes.adjustmentCapability === 'LEGACY') {
@@ -428,8 +673,10 @@ export async function sendChatMessage(options = {}, maybePreserveInput = false) 
 
       // 单轮精准澄清响应（仅针对明确的排程调整意图，如加景点缺少地点等）
       const isUnknownIntent = convRes.type === 'UNKNOWN' || convRes.operation === 'UNKNOWN';
-      if (!isUnknownIntent && (convRes.requiresClarification || convRes.type === 'CLARIFICATION')) {
-        assistant.content = convRes.clarificationQuestion || convRes.message || '请补充具体景点信息。';
+      if (isUnknownIntent || convRes.requiresClarification || convRes.type === 'CLARIFICATION') {
+        state.activeProposal = null;
+        state.plannerProposalDockOpen = false;
+        assistant.content = convRes.clarificationQuestion || convRes.message || '请告诉我要修改哪一天、哪个时段或哪个站点；我会直接生成调整预览。';
         assistant.pending = false;
         state.chatLoading = false;
         persistConversationUiState();
@@ -439,7 +686,7 @@ export async function sendChatMessage(options = {}, maybePreserveInput = false) 
 
       // 生成了 Proposal 预览方案卡片
       if (convRes.proposalId) {
-        state.activeProposal = convRes;
+        state.activeProposal = { ...convRes, requestMessage: input, requestDay, requestPinned, requestStopId };
         state.selectedOptionId = 'option-1';
         state.plannerProposalDockOpen = true;
         state.suggestionDismissed = false;
@@ -489,6 +736,9 @@ export async function sendChatMessage(options = {}, maybePreserveInput = false) 
         return;
       }
     } catch (err) {
+      assistant.pending = false;
+      if (!owns()) return;
+      state.chatLoading = false;
       const sessionUnavailable = err?.status === 404
         && (err.data?.code === 'PLANNER_SESSION_NOT_FOUND' || err.data?.recoverable === true);
       if (sessionUnavailable) {
@@ -532,8 +782,11 @@ export async function sendChatMessage(options = {}, maybePreserveInput = false) 
         state.activeProposal = null;
         try {
           const reloaded = await request(`/api/planner/sessions/${encodeURIComponent(state.sessionId)}`);
+          if (!owns()) return;
           if (reloaded.trip) state.trip = reloaded.trip;
-        } catch {}
+          assistant.content = '行程版本已更新，请核对最新行程后重新发送调整要求。';
+        } catch { assistant.content = '行程版本已变化，但暂时未能刷新。请重新打开这份行程后继续。'; }
+        assistant.pending = false; state.chatLoading = false; state.pendingIntent = null;
         if (renderView) renderView();
         persistConversationUiState();
         return;
@@ -565,7 +818,7 @@ export async function sendChatMessage(options = {}, maybePreserveInput = false) 
   try {
     let assistantMeta = null;
     // 用户看到的是“聊天模式”，底层聊天检索统一走 Agentic RAG 深度链路。
-    await readChatStream(input, state.chatSessionId, 'deep', {
+    await readChatStream(input, getChatMemorySessionId(state.chatSessionId, state.user?.id), 'deep', {
       plannerSessionId: state.sessionId || '',
       tripId: state.savedTripId || '',
       currentVersion: state.trip?.version || '',
@@ -573,6 +826,7 @@ export async function sendChatMessage(options = {}, maybePreserveInput = false) 
       activeStopId: activeStop?.id || '',
       activeStopName: activeStop?.name || ''
     }, (eventName, raw) => {
+      if (!owns()) return;
       if (eventName === 'progress') {
         let progress = raw;
         try {
@@ -586,13 +840,13 @@ export async function sendChatMessage(options = {}, maybePreserveInput = false) 
         try {
           state.chatMeta = JSON.parse(raw);
           assistantMeta = state.chatMeta?.assistant || null;
-          const suggestions = state.chatMeta?.actionableSuggestions || state.chatMeta?.assistant?.actionableSuggestions;
-          if (Array.isArray(suggestions) && suggestions.length > 0) {
-            assistant.actionableSuggestions = deduplicateSuggestions(suggestions);
-          }
           const pref = state.chatMeta?.detectedPreference || state.chatMeta?.assistant?.detectedPreference;
           if (pref) {
             assistant.detectedPreference = pref;
+          }
+          const suggestions = state.chatMeta?.actionableSuggestions || state.chatMeta?.assistant?.actionableSuggestions;
+          if (Array.isArray(suggestions) && suggestions.length > 0) {
+            assistant.actionableSuggestions = ensurePreferenceSuggestion(suggestions, assistant.detectedPreference);
           }
         } catch {
           state.chatMeta = { retrieval: { reason: raw } };
@@ -609,7 +863,7 @@ export async function sendChatMessage(options = {}, maybePreserveInput = false) 
         assistant.content = cleanContent;
         if (chips.length > 0) {
           const merged = [...(assistant.actionableSuggestions || []), ...chips];
-          assistant.actionableSuggestions = deduplicateSuggestions(merged);
+          assistant.actionableSuggestions = ensurePreferenceSuggestion(merged, assistant.detectedPreference);
         }
         assistant.pending = true;
 
@@ -641,9 +895,10 @@ export async function sendChatMessage(options = {}, maybePreserveInput = false) 
         assistant.pending = false;
         renderChatInDOM({ scrollToBottom: true }, renderView);
       }
-    }, activeChatAbortController.signal);
+    }, controller.signal);
   } catch (error) {
     assistant.pending = false;
+    if (!owns()) return;
     if (error?.name === 'AbortError') {
       assistant.content = assistant.content || '本次回复已停止，你可以继续提问。';
       return;
@@ -661,6 +916,7 @@ export async function sendChatMessage(options = {}, maybePreserveInput = false) 
     assistant.offerAdjustmentMode = false;
   } finally {
     assistant.pending = false;
+    if (!owns()) return;
     activeChatAbortController = null;
     state.chatLoading = false;
     if (assistant.rawContent) {
@@ -668,8 +924,11 @@ export async function sendChatMessage(options = {}, maybePreserveInput = false) 
       assistant.content = cleanContent;
       if (chips.length > 0) {
         const merged = [...(assistant.actionableSuggestions || []), ...chips];
-        assistant.actionableSuggestions = deduplicateSuggestions(merged);
+        assistant.actionableSuggestions = ensurePreferenceSuggestion(merged, assistant.detectedPreference);
       }
+    }
+    if (assistant.actionableSuggestions?.length > 0) {
+      assistant.actionableSuggestions = ensurePreferenceSuggestion(assistant.actionableSuggestions, assistant.detectedPreference);
     }
     if (!assistant.content.trim() && !assistant.error) {
       assistant.content = chatUnknownReply(activeStopName);
@@ -683,9 +942,23 @@ export async function sendChatMessage(options = {}, maybePreserveInput = false) 
     renderChatInDOM({ scrollToBottom: true }, renderView);
     window.setTimeout(() => document.querySelector('#chat-input')?.focus(), 0);
   }
+  } finally {
+    assistant.pending = false;
+    if (generation === chatGeneration && state.sessionId === requestSessionId) {
+      state.chatLoading = false;
+      if (activeChatAbortController === controller) activeChatAbortController = null;
+    }
+  }
 }
 
-export async function applyPlannerProposal({ renderView, scheduleTripMap, renderChatInDOM: passedRenderChatInDOM } = {}) {
+export function applyPlannerProposal(options = {}) {
+  if (activeApplyPromise) return activeApplyPromise;
+  const operation = doApplyPlannerProposal(options);
+  activeApplyPromise = operation;
+  return operation.finally(() => { if (activeApplyPromise === operation) activeApplyPromise = null; });
+}
+
+async function doApplyPlannerProposal({ renderView, scheduleTripMap, renderChatInDOM: passedRenderChatInDOM } = {}) {
   const chatRender = passedRenderChatInDOM || renderChatInDOM;
   const safeRenderChat = (opts, rv) => {
     if (typeof chatRender === 'function') {
@@ -697,6 +970,11 @@ export async function applyPlannerProposal({ renderView, scheduleTripMap, render
     }
   };
   if (!state.activeProposal) return;
+  if (proposalUnavailable(state.activeProposal, state.selectedOptionId || 'option-1')) {
+    toast('当前没有可应用的候选方案，请补充具体地点或调整搜索条件。');
+    safeRenderChat({ scrollToBottom: false }, renderView);
+    return;
+  }
   if (state.legacyMode || state.adjustmentCapability === 'LEGACY') {
     state.activeProposal = null;
     toast('当前保存行程处于 Legacy 模式，不支持新版 AI 局部调整。');
@@ -704,28 +982,43 @@ export async function applyPlannerProposal({ renderView, scheduleTripMap, render
     return;
   }
   const baseRevision = Number(state.activeProposal.baseRevision || state.trip?.version || 1);
+  const ticket = beginTripMutation('apply');
+  if (!ticket) { toast('行程正在更新，请完成后再应用调整。'); return; }
   const expectedVersion = baseRevision + 1;
+  const proposal = state.activeProposal;
+  const sessionId = state.sessionId, tripId = state.savedTripId, userId = state.user?.id;
+  const optionId = state.selectedOptionId || 'option-1';
+  const fingerprint = `${proposal.proposalId}|${optionId}|${baseRevision}`;
+  proposal.applyKeys ||= {};
+  const idempotencyKey = proposal.applyKeys[fingerprint] ||= plannerIdempotencyKey('planner-apply');
+  persistPlannerUiState();
+  const ownsApply = () => ticket.owns();
+  state.applyPending = true;
   state.chatLoading = true;
   safeRenderChat({ scrollToBottom: false }, renderView);
   try {
     const res = await request('/api/planner/adjust/apply', {
       method: 'POST',
       body: JSON.stringify({
-        sessionId: state.sessionId,
-        proposalId: state.activeProposal.proposalId,
-        optionId: state.selectedOptionId || 'option-1',
+        sessionId,
+        proposalId: proposal.proposalId,
+        optionId,
         baseRevision,
         forceApply: true,
         sessionAccessToken: state.sessionAccessToken || '',
-        idempotencyKey: plannerIdempotencyKey('planner-apply')
+        idempotencyKey
       })
     });
+    if (!ownsApply()) return;
     const currentVersion = Number(res.currentVersion ?? res.trip?.version);
     if (!res.trip || currentVersion !== expectedVersion) {
       throw Object.assign(new Error('服务端返回的行程版本不是严格的 Revision +1，已保留当前行程。'), { status: 502 });
     }
-    state.trip = res.trip;
+    if (!acceptTripReceipt(ticket, res.trip)) { toast('行程已更新，已忽略较旧的调整回执。'); return; }
+    state.chatMessages.push({ role: 'assistant', content: `调整已应用，当前行程为第 ${currentVersion} 版。你可以在行程中查看更新后的站点。${res.nextActionPrompt ? `\n\n${res.nextActionPrompt}` : ''}` });
+    persistChatUiState();
     state.activeProposal = null;
+    state.pendingIntent = res.pendingIntent || null;
     state.plannerProposalDockOpen = false;
     state.selectedStopId = null;
     if (state.selectedStopIds instanceof Set) state.selectedStopIds.clear();
@@ -756,12 +1049,15 @@ export async function applyPlannerProposal({ renderView, scheduleTripMap, render
     if (scheduleTripMap) scheduleTripMap();
     safeRenderChat({ scrollToBottom: false }, renderView);
   } catch (error) {
+    if (!ownsApply()) return;
     const expired = error.status === 400 && /过期|不存在|expired/i.test(`${error.message || ''} ${error.data?.code || ''}`);
     const sessionUnavailable = error?.status === 404
       && (error.data?.code === 'PLANNER_SESSION_NOT_FOUND' || error.data?.recoverable === true);
     if (sessionUnavailable) {
       const message = '当前规划会话已过期，但行程草稿仍保留。请重新生成行程，或从“我的行程”重新打开已保存行程。';
       state.activeProposal = null;
+      state.applyPending = false;
+      state.chatLoading = false;
       state.sessionAccessToken = null;
       state.sessionId = null;
       state.legacyMode = false;
@@ -781,7 +1077,8 @@ export async function applyPlannerProposal({ renderView, scheduleTripMap, render
       if (state.sessionId) {
         try {
           const latest = await request(`/api/planner/sessions/${encodeURIComponent(state.sessionId)}`);
-          if (latest.trip) state.trip = latest.trip;
+          if (!ownsApply()) return;
+          if (latest.trip) acceptTripReceipt(ticket, latest.trip);
           state.legacyMode = Boolean(latest.legacyMode);
           state.adjustmentCapability = latest.adjustmentCapability || (state.legacyMode ? 'LEGACY' : 'V1_PROPOSAL');
         } catch {}
@@ -796,6 +1093,9 @@ export async function applyPlannerProposal({ renderView, scheduleTripMap, render
       toast(error?.status === 401 ? '行程规划需要登录，请先登录后再试。' : '这次方案暂时没有应用成功，请重新生成预览后再试。');
     }
   } finally {
+    const stillOwns = finishTripMutation(ticket);
+    if (!stillOwns) return;
+    state.applyPending = false;
     state.chatLoading = false;
     safeRenderChat({ scrollToBottom: false }, renderView);
   }

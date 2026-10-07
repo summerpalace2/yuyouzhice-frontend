@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { deduplicateSuggestions } from './chat-service.js';
+import { deduplicateSuggestions, ensurePreferenceSuggestion } from './chat-service.js';
 import { handleChatAction } from './chat-action-handler.js';
 import { state } from '../../app-core/state.js';
 
@@ -229,3 +229,64 @@ test('handleChatAction execute-action-chip save_slot_preference saves slot tag a
   assert.equal(renderedChat, true, 'Chat must be re-rendered to update UI');
 });
 
+test('ensurePreferenceSuggestion automatically synthesizes preference save chip when missing', () => {
+  const chipsOnlyAdjustments = [
+    { action: 'replace_meal', icon: '🌶️', label: '把午餐火锅调整为中辣红汤+鸳鸯锅', payload: '替换为红汤火锅' },
+    { action: 'add_stop', icon: '🍧', label: '午餐后顺路加一站解辣糖水小憩', payload: '加一站糖水' }
+  ];
+
+  const result = ensurePreferenceSuggestion(chipsOnlyAdjustments);
+
+  // 必须自动补齐偏好沉淀卡片
+  const hasPrefChip = result.some(c => c.action === 'save_slot_preference' || c.action === 'save_memory');
+  assert.equal(hasPrefChip, true, 'Must automatically inject preference save chip');
+  const spicyPref = result.find(c => c.action === 'save_slot_preference');
+  assert.ok(spicyPref, 'Should inject save_slot_preference');
+  assert.equal(spicyPref.label.includes('老火锅'), true);
+  assert.ok(result.length <= 3, 'Total chips must not exceed 3');
+});
+
+test('handleChatAction execute-action-chip correctly handles bracket extraction for attraction slot', async () => {
+  state.profile = { diningSlots: [], attractionSlots: [] };
+  state.user = null;
+
+  const fakeChipButton = {
+    dataset: {
+      chipAction: 'save_slot_preference',
+      chipLabel: '将【人文历史】加入景点偏好',
+      chipPayload: '巴渝人文古迹历史' // 非 JSON payload
+    },
+    classList: {
+      _classes: new Set(),
+      add(c) { this._classes.add(c); },
+      remove(c) { this._classes.delete(c); },
+      contains(c) { return this._classes.has(c); }
+    },
+    disabled: false,
+    innerHTML: '',
+    closest() { return this; }
+  };
+
+  await handleChatAction({
+    action: 'execute-action-chip',
+    target: fakeChipButton,
+    state,
+    toast: () => {},
+    renderView: () => {},
+    renderFloatingBtn: () => {},
+    renderChatInDOM: () => {},
+    renderPlannerProposalDockInDOM: () => {},
+    saveUserPlan: () => {},
+    saveUserChats: () => {},
+    persistTripWorkspace: () => {},
+    getTripChatKey: () => 'chat-key',
+    sendChatMessage: async () => {},
+    cancelChatMessage: () => {},
+    applyPlannerProposal: async () => {},
+    planFromCurrent: async () => {}
+  });
+
+  assert.equal(state.profile.attractionSlots.includes('人文历史'), true, 'Attraction slot 人文历史 should be extracted and added to attractionSlots');
+  assert.equal(state.profile.diningSlots.includes('人文历史'), false, 'Attraction slot must NOT be added to diningSlots');
+  assert.equal(fakeChipButton.classList.contains('is-applied'), true);
+});

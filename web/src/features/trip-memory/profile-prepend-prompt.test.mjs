@@ -17,7 +17,8 @@ test('profileView renders AI Prepend Planning Prompt editor and 7-day memory str
       { id: 'm-1', content: '偏好老火锅', category: 'DIET', updatedAt: Date.now() },
       { id: 'm-2', content: '喜欢老茶馆', category: 'DIET', updatedAt: Date.now() },
       { id: 'm-3', content: '少爬坡少走台阶', category: 'PACE', updatedAt: Date.now() },
-      { id: 'm-4', content: '偏爱山城夜景', category: 'INTEREST', updatedAt: Date.now() }
+      { id: 'm-4', content: '偏爱山城夜景', category: 'INTEREST', updatedAt: Date.now() },
+      { id: 'm-5', content: '公共交通优先', category: 'TRANSPORT', updatedAt: Date.now() }
     ]
   };
   state.memoriesExpanded = false;
@@ -35,8 +36,9 @@ test('profileView renders AI Prepend Planning Prompt editor and 7-day memory str
   assert.ok(html.includes('7天滚动流'), 'Should mention 7-day rolling stream');
   assert.ok(!html.includes('同一账号至少间隔 12 小时'), 'Should NOT have the obsolete 12-hour limitation text');
 
-  // 3. 超过3条记忆时，默认折叠并展示展开按钮
-  assert.ok(html.includes('展开其余 1 条近期记忆'), 'Should show expand toggle button when collapsed');
+  // 3. 折叠按类别而非来源计数；同一饮食类别的两条来源一起显示。
+  assert.ok(html.includes('展开其余 1 类偏好'), 'Should show expand toggle button when collapsed');
+  assert.ok(html.includes('喜欢老茶馆'), 'Same-category sources must not be hidden by the category fold');
 
   // 4. 展开模式下展示收起按钮
   state.memoriesExpanded = true;
@@ -53,7 +55,7 @@ test('handleProfileAction save-prepend-prompt saves prompt to backend and update
   let toastMsg = '';
 
   // 创建 mock DOM textarea
-  const fakeEditor = { value: '【新旅行画像】喜欢清淡，多喝茶' };
+  const fakeEditor = { value: '酒店希望安静' };
   globalThis.document = {
     querySelector: (sel) => (sel === '#prepend-prompt-editor' ? fakeEditor : null),
     querySelectorAll: () => []
@@ -66,7 +68,7 @@ test('handleProfileAction save-prepend-prompt saves prompt to backend and update
     request: async (url, opts) => {
       requestedUrl = url;
       requestBody = JSON.parse(opts.body);
-      return { ok: true, prependPrompt: requestBody.prependPrompt };
+      return { ok: true, prependPrompt: '自动偏好：清淡；手动备注：酒店希望安静', userCustomizedPrompt: requestBody.prependPrompt };
     },
     toast: (msg) => { toastMsg = msg; },
     refreshProfileInDOM: () => {},
@@ -77,9 +79,10 @@ test('handleProfileAction save-prepend-prompt saves prompt to backend and update
   assert.equal(handled, true);
   assert.equal(requestedUrl, '/api/preferences/prepend-prompt');
   assert.equal(requestBody.action, 'save');
-  assert.equal(requestBody.prependPrompt, '【新旅行画像】喜欢清淡，多喝茶');
-  assert.equal(state.profile.profilePrependPrompt, '【新旅行画像】喜欢清淡，多喝茶');
-  assert.ok(toastMsg.includes('已保存生效'));
+  assert.equal(requestBody.prependPrompt, '酒店希望安静');
+  assert.equal(state.profile.profilePrependPrompt, '自动偏好：清淡；手动备注：酒店希望安静');
+  assert.equal(state.profile.userCustomizedPrompt, '酒店希望安静');
+  assert.ok(toastMsg.includes('手动备注已保存'));
 });
 
 test('handleProfileAction toggle-expand-memories toggles memoriesExpanded state', async () => {
