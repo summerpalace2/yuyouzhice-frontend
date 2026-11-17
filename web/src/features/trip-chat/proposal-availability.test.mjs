@@ -28,8 +28,8 @@ test('旧对话快捷操作按当前行程重新发起，同时更新模式按�
       sent = args.inputOverride;
       state.chatMessages.push({ role: 'user', content: sent }, { role: 'assistant', content: '调整预览已生成', pending: false });
     } });
-  assert.equal(state.chatMode, 'planner');
+  assert.equal(state.chatMode, 'agent');
   assert.ok(rendered > 0);
   assert.equal(sent, '加入甜品停留');
-  assert.equal(notices[0][1].title, '已切换至调整模式');
+  assert.equal(notices[0][1].title, '已启用全智能体模式');
 });

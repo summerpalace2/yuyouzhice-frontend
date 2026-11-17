@@ -103,7 +103,7 @@ test('handleChatAction execute-action-chip marks model as applied and debounces 
   assert.equal(lastPrompt, '在当前行程加入一处甜点或特色糖水小憩停留');
   assert.equal(fakeButton.disabled, true, 'Button should be disabled immediately');
   assert.equal(fakeButton.classList.contains('is-applied'), true, 'Button should have is-applied class');
-  assert.equal(state.chatMode, 'planner', 'Mode should switch to planner for itinerary addition');
+  assert.equal(state.chatMode, 'agent', 'Mode should route to agent for Full-Agent Native itinerary addition');
   assert.equal(state.chatMessages[0].actionableSuggestions[0].applied, true, 'Suggestion in state.chatMessages must be marked applied');
 
   // 第二次点击（防抖防重）

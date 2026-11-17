@@ -568,6 +568,7 @@ export async function sendChatMessage(options = {}, maybePreserveInput = false) 
     && state.sessionId === requestSessionId && state.savedTripId === requestTripId
     && Number(state.trip?.version || 1) === requestVersion;
   state.chatLoading = true;
+  if (useAgentChannel && state.view === 'planning') state.chatDockOpen = true;
   renderChatInDOM({ scrollToBottom: true }, renderView);
   const activeStop = state.trip?.days?.flatMap((day) => day.stops || [])
     .find((stop) => stop.id === state.selectedStopId);

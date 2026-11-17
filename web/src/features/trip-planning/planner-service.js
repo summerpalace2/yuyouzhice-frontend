@@ -1,16 +1,30 @@
 import { state } from '../../app-core/state.js';
 import { request } from '../../shared/api/client.js';
 import { toast } from '../../shared/ui/toast.js';
-import { saveUserPlan, saveUserChats, loadUserChats, getTripChatKey } from '../../app-core/user-store.js';
+import { saveUserPlan, loadUserChats, getTripChatKey } from '../../app-core/user-store.js';
 import { invalidatePageCache } from '../../app-core/page-cache.js';
-import { detachChatWorkspace } from '../trip-chat/chat-service.js';
+import { detachChatWorkspace, sendChatMessage } from '../trip-chat/chat-service.js';
 import { captureWorkspace } from '../../app-core/workspace-lifecycle.js';
 import { transitionMainView } from '../../app-core/main-view-transition.js';
+
+function buildAgentPlanningPrompt(submittedPrompt, constraints = {}, usePreferences = true) {
+  const base = String(submittedPrompt || '').trim() || '请帮我规划一次重庆经典旅行方案。';
+  const extras = [];
+  if (constraints && typeof constraints === 'object') {
+    if (constraints.durationDays) extras.push(`游玩天数=${constraints.durationDays}天`);
+    if (constraints.companions) extras.push(`同行人=${constraints.companions}`);
+    if (constraints.walkingTolerance) extras.push(`步行强度=${constraints.walkingTolerance}`);
+    if (constraints.transportPreference) extras.push(`交通偏好=${constraints.transportPreference}`);
+    if (constraints.budget) extras.push(`预算=${constraints.budget}`);
+  }
+  if (!usePreferences) extras.push('本次忽略历史个人偏好');
+  return extras.length ? `${base}\n（补充要求：${extras.join('；')}）` : base;
+}
 
 export async function plan({
   prompt = null,
   constraints = {},
-  usePreferences = false,
+  usePreferences = true,
   preferenceDecision = '',
   preserveSavedTripId = false,
   renderView,
@@ -32,105 +46,58 @@ export async function plan({
   detachChatWorkspace();
   const owner = captureWorkspace();
   state.planOperation = owner;
-  const owns = () => state.planOperation === owner && owner.owns();
+  const submittedPrompt = String(typeof prompt === 'string'
+    ? prompt
+    : (document.querySelector('#prompt-input')?.value ?? state.prompt) || '').trim();
+  if (!submittedPrompt) {
+    toast('请先输入你的旅行想法或天数要求。');
+    return;
+  }
+
+  state.prompt = submittedPrompt;
+  state.planRequestError = null;
   if (!preserveSavedTripId) {
     state.savedTripId = null;
     state.itineraryMemorySnapshot = null;
   }
-  const submittedPrompt = typeof prompt === 'string'
-    ? prompt
-    : (document.querySelector('#prompt-input')?.value ?? state.prompt);
-  state.prompt = submittedPrompt;
-  state.planRequestError = null;
-  state.loading = true;
-  state.loadingPhase = '理解旅行条件';
+  state.trip = null;
+  state.sessionId = null;
+  state.activeProposal = null;
+  state.plannerProposalDockOpen = false;
+  state.selectedStopId = null;
+  if (state.selectedStopIds instanceof Set) state.selectedStopIds.clear();
+  state.pinnedStopIds = new Set();
+  state.loading = false;
+  state.loadingPhase = '';
+  state.chatMode = 'agent';
+  state.chatDockOpen = true;
+  state.chatLoading = false;
+  state.agentDraftingPending = true;
+
+  const pendingChatKey = getTripChatKey(null, `agent-plan-${Date.now()}`);
+  state.chatSessionId = pendingChatKey;
+  state.tripChatHistories = { ...loadUserChats(state.user?.id), ...(state.tripChatHistories || {}) };
+  state.chatMessages = [];
+  state.tripChatHistories[pendingChatKey] = state.chatMessages;
+
   transitionMainView(state, 'planning');
-  if (renderView) renderView();
-  if (renderHeader) renderHeader();
-  if (renderLoader) renderLoader();
+  if (render) render();
 
-  const phaseTimer = window.setInterval(() => {
-    if (!owns()) return;
-    const phases = ['理解旅行条件', '检索可信信息', '组合路线', '生成方案'];
-    const index = phases.indexOf(state.loadingPhase);
-    if (index >= 0 && index < phases.length - 1) {
-      state.loadingPhase = phases[index + 1];
-      if (renderLoader) renderLoader();
-    }
-  }, 600);
-
+  const agentPrompt = buildAgentPlanningPrompt(submittedPrompt, constraints, usePreferences);
   try {
-    const data = await request('/api/plan', {
-      method: 'POST',
-      body: JSON.stringify({
-        prompt: submittedPrompt,
-        freeText: submittedPrompt,
-        constraints,
-        usePreferences,
-        preferenceDecision
-      })
+    await sendChatMessage({
+      inputOverride: agentPrompt,
+      preserveInput: true,
+      renderView,
+      scheduleTripMap
     });
-    if (!owns()) return;
-    state.sessionId = data.sessionId;
-    state.sessionAccessToken = data.sessionAccessToken || null;
-    state.legacyMode = Boolean(data.legacyMode);
-    state.adjustmentCapability = data.adjustmentCapability || (state.legacyMode ? 'LEGACY' : 'V1_PROPOSAL');
-    state.trip = data.trip;
-    state.plannerVersion = data.plannerVersion || data.trip?.plannerVersion || '1.0.0-v1';
-    state.policyVersion = data.policyVersion || data.trip?.policyVersion || '2026.08-v1';
-    state.routeDataStatus = data.routeDataStatus || data.trip?.routeDataStatus || 'ESTIMATED';
-    state.explanationSource = data.explanationSource || data.trip?.explanationSource || 'TEMPLATE';
-    state.degraded = Boolean(data.degraded || data.trip?.degraded);
-    state.degradationReasons = data.degradationReasons || data.trip?.degradationReasons || [];
-    state.activeProposal = null;
-    state.plannerProposalDockOpen = false;
-    state.selectedStopId = null;
-    if (state.selectedStopIds instanceof Set) state.selectedStopIds.clear();
-    state.pinnedStopIds = new Set();
-    state.selectedOptionId = 'option-1';
-    state.suggestionDismissed = false;
-    state.preferenceProposal = data.preferenceProposal;
-
-    // 为每个规划独立绑定唯一聊天会话键，并与各用户独立存储隔离
-    const tripChatKey = getTripChatKey(state.savedTripId, data.sessionId);
-    state.chatSessionId = tripChatKey;
-    state.tripChatHistories = { ...loadUserChats(state.user?.id), ...(state.tripChatHistories || {}) };
-    state.chatMessages = state.tripChatHistories[tripChatKey] || [];
-    state.chatMeta = null;
-    state.chatProposal = null;
-    state.tripChatHistories[tripChatKey] = state.chatMessages;
-
-    // 持久化当前用户的规划状态与聊天记录（绝不保存敏感凭据）
-    saveUserPlan(state.user?.id, {
-      trip: state.trip,
-      sessionId: state.sessionId,
-      savedTripId: state.savedTripId,
-      prompt: state.prompt,
-      view: 'planning'
-    });
-    saveUserChats(state.user?.id, state.tripChatHistories);
-    // 新规划已写入服务端历史会话；返回历史页时必须读取最新列表。
-    invalidatePageCache('history');
-
-    toast(usePreferences ? '已沿用长期偏好生成定制行程。' : '专属行程已生成！支持地图分天切换与自由微调。');
-  } catch (error) {
-    if (!owns()) return;
-    // If a new request fails, keep the previous draft but label it as stale;
-    // otherwise the unchanged itinerary can look like a successful new result.
-    state.planRequestError = state.trip
-      ? { message: error.message || '新规划请求暂时未完成。', prompt: submittedPrompt }
-      : null;
-    if (!state.trip) transitionMainView(state, 'home');
-    toast(error.message);
-  } finally {
-    window.clearInterval(phaseTimer);
-    if (owns()) {
-      state.loading = false;
-      state.loadingPhase = '';
-      if (render) render();
-      if (scheduleTripMap) scheduleTripMap();
-    }
     if (state.planOperation === owner) state.planOperation = null;
+    invalidatePageCache('history');
+  } catch (error) {
+    if (state.planOperation === owner) state.planOperation = null;
+    toast(error?.message || '全智能体规划启动失败，请在右侧重试。');
+  } finally {
+    state.agentDraftingPending = false;
   }
 }
 

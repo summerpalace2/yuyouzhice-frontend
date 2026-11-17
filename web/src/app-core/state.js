@@ -124,10 +124,10 @@ export const state = {
   chatSessionId: null,
   chatMessages: [],
   chatInput: '',
-  // 主入口默认对齐统一智能体模式（agent）；原有 chat / planner 模式保留作对照参考。
+  // 主入口默认对齐全智能体原生工作区（agent），默认展开右侧协同对话栏
   chatMode: 'agent',
   chatLoading: false,
-  chatDockOpen: false,
+  chatDockOpen: true,
   plannerProposalDockOpen: false,
   chatRoute: 'idle',
   chatMeta: null,

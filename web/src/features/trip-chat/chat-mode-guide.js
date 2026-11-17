@@ -2,9 +2,9 @@ const acknowledged = new Set();
 const keyFor = userId => `yuyouzhice:chat-mode-guide:v1:${userId || 'guest'}`;
 
 export const CHAT_MODES = {
-  chat: { name: '聊天模式', description: '以对话为主导，咨询景点、美食、天气和交通。' },
-  planner: { name: '调整模式', description: '以局部修改为主导，增删或替换行程站点，先预览、确认后应用。' },
-  agent: { name: '智能体模式', description: '自主联动天气、路网、知识库与行程工具，写操作须人工确认。' }
+  chat: { name: '全智能体模式', description: '自主联动天气、高德实景 POI、路网耗时与知识库，自由规划与微调并在写前交你确认。' },
+  planner: { name: '全智能体模式', description: '自主联动天气、高德实景 POI、路网耗时与知识库，自由规划与微调并在写前交你确认。' },
+  agent: { name: '全智能体模式', description: '自主联动天气、高德实景 POI、路网耗时与知识库，写前人机确认落库。' }
 };
 
 export function needsChatModeGuide(userId) {
@@ -22,17 +22,15 @@ export function acknowledgeChatModeGuide(userId) {
 
 export function chatModeGuideHtml(userId, force = false) {
   if (!force && !needsChatModeGuide(userId)) return '';
-  return `<section class="chat-mode-guide" aria-label="智能体与对话模式说明">
-    <strong>先了解三种对话模式</strong>
-    <p><b>🤖 智能体模式</b>：${CHAT_MODES.agent.description}</p>
-    <p><b>💬 聊天模式</b>：${CHAT_MODES.chat.description}</p>
-    <p><b>⚡ 调整模式</b>：${CHAT_MODES.planner.description}</p>
-    <div><small>随时点击上方按钮切换</small><button type="button" class="primary mini-btn" data-action="acknowledge-chat-mode-guide">知道了</button></div>
+  return `<section class="chat-mode-guide" aria-label="全智能体工作区指南">
+    <strong>全智能体原生工作区</strong>
+    <p><b>🤖 自由编排与查证</b>：支持按天指定景点、查天气、高德算路网、搜索长尾美食与跨天重排。</p>
+    <p><b>🛡️ 写前人机确认 (HIL)</b>：调整行程、固定站点、正式保存或写入偏好均须你点击确认后生效。</p>
+    <div><small>随时在右侧输入或点击左侧站点卡片协作</small><button type="button" class="primary mini-btn" data-action="acknowledge-chat-mode-guide">知道了</button></div>
   </section>`;
 }
 
 export function announceChatMode(mode, toast) {
-  const key = mode === 'planner' ? 'planner' : (mode === 'agent' ? 'agent' : 'chat');
-  const info = CHAT_MODES[key];
-  toast(info.description, { title: `已切换至${info.name}`, prominent: true, duration: 4500 });
+  const info = CHAT_MODES.agent;
+  toast(info.description, { title: `已启用${info.name}`, prominent: true, duration: 4500 });
 }

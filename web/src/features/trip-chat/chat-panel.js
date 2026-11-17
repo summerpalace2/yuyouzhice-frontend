@@ -34,17 +34,25 @@ function renderAgentTraceHtml(message) {
   const steps = Array.isArray(message?.agentSteps) ? message.agentSteps : [];
   const tools = Array.isArray(message?.toolResults) ? message.toolResults : [];
   if (!steps.length && !tools.length) return '';
+  const rounds = steps.length ? Math.max(1, steps[steps.length - 1]?.step || 1) : 1;
   const pills = tools.map((item) => {
     const label = AGENT_TOOL_LABELS[item.toolName] || item.toolName || '工具调用';
     const cls = item.ok ? 'is-ok' : 'is-fail';
     const icon = item.ok ? '✓' : '!';
-    return `<span class="agent-tool-pill ${cls}" title="${escapeHtml(item.summary || '')}"><i>${icon}</i> <b>${escapeHtml(label)}</b> ${escapeHtml(item.summary || '')}</span>`;
+    return `<span class="agent-tool-pill ${cls}" title="${escapeHtml(item.summary || '')}"><i>${icon}</i> <b>${escapeHtml(label)}</b>${item.summary ? ` · ${escapeHtml(item.summary)}` : ''}</span>`;
   }).join('');
+  if (!pills) {
+    return `
+      <div class="agent-trace" aria-label="智能体执行轨迹">
+        <div class="agent-trace-head">🤖 智能体推理 · 第 ${rounds} 轮</div>
+      </div>
+    `;
+  }
   return `
-    <div class="agent-trace" aria-label="智能体执行轨迹">
-      <div class="agent-trace-head">🤖 智能体推理 ${steps.length ? `· 共 ${Math.max(1, steps[steps.length - 1]?.step || 1)} 轮` : ''}</div>
-      ${pills ? `<div class="agent-tool-pills">${pills}</div>` : ''}
-    </div>
+    <details class="agent-trace agent-trace-details" ${message.pending ? 'open' : ''} aria-label="智能体执行轨迹">
+      <summary class="agent-trace-head">🤖 智能体已调用 ${tools.length} 项工具 · 共 ${rounds} 轮 <span class="agent-trace-toggle">${message.pending ? '执行中' : '展开/收起'}</span></summary>
+      <div class="agent-tool-pills">${pills}</div>
+    </details>
   `;
 }
 
@@ -79,6 +87,12 @@ function renderAgentConfirmCardHtml(confirmReq, messageIndex) {
   if (args.walkingTolerance) details.push(`步行强度：${args.walkingTolerance}`);
   if (args.transportPreference) details.push(`交通偏好：${args.transportPreference}`);
   if (args.stayArea) details.push(`住宿片区：${args.stayArea}`);
+  const dayPreviewHtml = Array.isArray(args.days) && args.days.length
+    ? `<div class="agent-confirm-days-preview">${args.days.slice(0, 5).map((d) => {
+        const stops = Array.isArray(d.stops) ? d.stops.map((s) => s?.name).filter(Boolean).join(' → ') : '';
+        return `<div><b>第${escapeHtml(String(d.day || ''))}天${d.theme ? ` · ${escapeHtml(d.theme)}` : ''}</b>：${escapeHtml(stops || '自由安排')}</div>`;
+      }).join('')}</div>`
+    : '';
 
   const statusTag = isApproved
     ? '<span class="agent-confirm-status is-approved">✓ 已确认执行</span>'
@@ -93,6 +107,7 @@ function renderAgentConfirmCardHtml(confirmReq, messageIndex) {
         ${statusTag}
       </div>
       <p class="agent-confirm-summary">${escapeHtml(confirmReq.summary || '请确认是否执行此变更操作。')}</p>
+      ${dayPreviewHtml}
       ${details.length ? `<div class="agent-confirm-meta">${details.map((d) => `<span>${escapeHtml(d)}</span>`).join('')}</div>` : ''}
       ${confirmReq.error ? `<div class="agent-confirm-error">${escapeHtml(confirmReq.error)}</div>` : ''}
       ${isPending ? `
@@ -153,8 +168,6 @@ export function chatMessageHtml(message, messageIndex = -1) {
       <span class="chat-error-actions">
         ${!state.user && /登录/.test(errorText) ? '<button class="chat-inline-action chat-login-action" type="button" data-action="open-auth-page" data-mode="login">去登录</button>' : ''}
         ${message.retryMessage && !plannerSessionError ? `<button class="chat-inline-action" type="button" data-action="retry-chat" data-prompt="${escapeHtml(message.retryMessage)}">重新发送</button>` : ''}
-        ${offerChatMode ? '<button class="chat-inline-action chat-mode-fallback-action" type="button" data-action="switch-chat-mode">切换至聊天模式</button>' : ''}
-        ${offerAdjustmentMode ? `<button class="chat-inline-action chat-mode-adjust-action" type="button" data-action="switch-adjustment-mode" data-prompt="${escapeHtml(message.retryMessage || '')}">切换至调整模式</button>` : ''}
       </span>
     </div>
   ` : '';
@@ -536,40 +549,16 @@ function memoryCandidateHtml() {
 }
 
 export function chatModeTabsHtml(mode = state.chatMode, canAdjust = true) {
-  const isAgent = mode === 'agent';
-  const isAdjustment = !isAgent && canAdjust && mode === 'planner';
-  const isChat = !isAgent && !isAdjustment;
   return `
-    <div class="chat-mode-tabs" role="tablist" aria-label="对话模式切换">
+    <div class="chat-mode-tabs agent-only-header" role="status" aria-label="全智能体工作区">
       <button type="button"
-        class="chat-mode-tab-btn ${isAgent ? 'is-active' : ''}"
+        class="chat-mode-tab-btn is-active"
         data-action="switch-agent-mode"
-        role="tab"
-        aria-selected="${isAgent}"
-        title="自主调用天气、高德算路、知识库及行程全周期工具，写操作须人工确认">
+        aria-pressed="true"
+        title="全智能体原生编排：自主调用天气、高德实景 POI、算路网、知识库与自由行程编辑工具">
         <span class="chat-mode-tab-icon">🤖</span>
-        <span>智能体</span>
+        <span>全智能体工作区</span>
       </button>
-      <button type="button"
-        class="chat-mode-tab-btn ${isChat ? 'is-active' : ''}"
-        data-action="switch-chat-mode"
-        role="tab"
-        aria-selected="${isChat}"
-        title="旧版对照：只回答景点、天气、美食等咨询，不改动行程">
-        <span class="chat-mode-tab-icon">💬</span>
-        <span>聊天模式</span>
-      </button>
-      ${canAdjust ? `
-      <button type="button"
-        class="chat-mode-tab-btn ${isAdjustment ? 'is-active' : ''}"
-        data-action="switch-adjustment-mode"
-        role="tab"
-        aria-selected="${isAdjustment}"
-        title="旧版对照：结合当前行程进行局部调整、加减或替换景点">
-        <span class="chat-mode-tab-icon">⚡</span>
-        <span>调整模式</span>
-      </button>
-      ` : ''}
     </div>
   `;
 }
@@ -577,34 +566,27 @@ export function chatModeTabsHtml(mode = state.chatMode, canAdjust = true) {
 export function chatPanel({ floating = false } = {}) {
   const hasPlanningContext = state.view === 'planning' && Boolean(state.trip);
   const canAdjust = Boolean(hasPlanningContext);
-  const chatMode = state.chatMode === 'agent'
-    ? 'agent'
-    : (canAdjust && state.chatMode === 'planner' ? 'planner' : 'chat');
+  const chatMode = 'agent';
   const isGuestChat = !state.user && !hasPlanningContext;
-  const inputPlaceholder = chatMode === 'agent'
-    ? (hasPlanningContext ? '直接说复合需求，例如：查明天天气并帮我把下午室外换成室内场馆…' : '试试连续查天气、算路程或问景点门票预约政策…')
-    : (chatMode === 'planner'
-      ? (state.selectedStopId ? '输入局部调整要求，例如：换成附近的室内景点…' : '描述要怎样微调当前行程，例如：少走路、多安排室内景点…')
-      : hasPlanningContext ? '问问景点、天气、交通或美食，不会直接修改行程…' : '问问重庆景点、天气、交通或美食…');
+  const inputPlaceholder = hasPlanningContext
+    ? '直接提需求，例如：把第2天磁器口换成礼嘉智慧公园，再加一家微辣江湖菜…'
+    : '输入重庆旅行需求（如：规划2天亲子游，第1天洪崖洞、第2天动物园）或景点/天气/美食咨询…';
   const modeTabs = chatModeTabsHtml(chatMode, canAdjust);
-  const compactContextHint = chatMode === 'planner'
-    ? '先给出预览，确认后才会改动行程'
-    : '只回答问题，不会直接改动行程';
   return `
-    <aside class="panel chat-panel ${floating ? 'chat-panel-floating' : ''} ${isGuestChat ? 'chat-panel-guest' : ''}" ${floating ? 'role="dialog" aria-label="悠悠 AI 行程助手"' : 'aria-label="AI 智能旅行助理"'}>
+    <aside class="panel chat-panel ${floating ? 'chat-panel-floating' : 'chat-panel-inline'} ${isGuestChat ? 'chat-panel-guest' : ''}" ${floating ? 'role="dialog" aria-label="悠悠 AI 行程助手"' : 'aria-label="全智能体旅行协同工作区"'}>
       <div class="panel-pad">
         <div class="chat-header-row">
           <div class="chat-dock-heading">
             <span class="chat-dock-avatar" aria-hidden="true">渝</span>
             <div>
-              <div class="panel-title">AI 旅行决策助手</div>
-              <span class="chat-dock-live"><i></i> 悠悠在线</span>
+              <div class="panel-title">全智能体决策助手</div>
+              <span class="chat-dock-live"><i></i> 悠悠在线 · Agent Native</span>
             </div>
-            <span class="chat-subtitle">${hasPlanningContext ? '聊天，或对当前行程做局部调整' : '游客体验 · 只聊旅行问题'}</span>
+            <span class="chat-subtitle">${hasPlanningContext ? '自主核查 · 自由改排 · 写前人机确认' : '自主查证与行程编排'}</span>
           </div>
           <div class="chat-header-controls">
             ${!floating ? modeTabs : ''}
-            ${floating ? '<button class="chat-dock-close" type="button" data-action="close-chat-dock" aria-label="收起 AI 助手">×</button>' : ''}
+            ${state.view === 'planning' ? '<button class="chat-dock-close" type="button" data-action="close-chat-dock" title="收起智能体面板" aria-label="收起智能体面板">×</button>' : ''}
           </div>
         </div>
 
@@ -622,8 +604,8 @@ export function chatPanel({ floating = false } = {}) {
           ${state.chatMessages.length === 0 ? `
             <div class="chat-empty">
               <span class="chat-empty-orb" aria-hidden="true">✦</span>
-              <strong>${hasPlanningContext ? '从你的行程开始聊' : '先从旅行问题开始聊'}</strong>
-              <p>${hasPlanningContext ? '可以问景点，也可以说“把第二天改得轻松一点”。我会先给你预览，确认后再应用。' : '可以问景点、天气、交通和美食。完整行程规划需要登录账号。'}</p>
+              <strong>${hasPlanningContext ? '全智能体已接入当前行程' : '用自然语言启动全智能体规划'}</strong>
+              <p>${hasPlanningContext ? '直接说“把第2天换成礼嘉智慧公园”“在洪崖洞附近加家微辣江湖菜”或“固定这一站”，改写前都会先让你核对确认。' : '支持按天指定景点、查天气、查高德真实地点与通勤耗时；登录后即可生成并保存完整专属行程。'}</p>
             </div>
           ` : state.chatMessages.map(chatMessageHtml).join('')}
         </div>
@@ -634,7 +616,7 @@ export function chatPanel({ floating = false } = {}) {
               id="chat-input"
               rows="1"
               placeholder="${inputPlaceholder}"
-              aria-label="输入旅行问题或局部调整要求；Enter 发送，Shift 加 Enter 换行"
+              aria-label="输入旅行规划或自由调整指令；Enter 发送，Shift 加 Enter 换行"
               title="Enter 发送 · Shift + Enter 换行"
             ${state.chatLoading ? 'disabled' : ''}
             >${escapeHtml(state.chatInput)}</textarea>
@@ -649,66 +631,24 @@ export function chatPanel({ floating = false } = {}) {
 }
 
 export function floatingChatDock() {
-  if (state.view !== 'planning' || !state.trip) return '';
-  const attention = state.activeProposal ? '待确认调整' : state.chatLoading ? '正在回复' : '问问悠悠';
+  if (state.view !== 'planning') return '';
+  if (state.chatDockOpen) return '';
+  const attention = state.chatLoading ? '智能体编排中' : '展开智能体协同';
   return `
-    <div class="chat-dock ${state.chatDockOpen ? 'is-open' : ''}">
-      ${state.chatDockOpen ? `<div id="chat-dock-panel" class="chat-dock-panel">${chatPanel({ floating: true })}</div>` : `
-        <button class="chat-dock-trigger" type="button" data-action="open-chat-dock" aria-expanded="false" aria-controls="chat-dock-panel">
-          <span class="chat-dock-trigger-icon" aria-hidden="true">✦</span>
-          <span class="chat-dock-trigger-copy"><strong>悠悠 AI</strong><small>${attention}</small></span>
-          ${state.activeProposal ? '<span class="chat-dock-badge">1</span>' : ''}
-        </button>
-      `}
+    <div class="chat-dock">
+      <button class="chat-dock-trigger" type="button" data-action="open-chat-dock" aria-expanded="false">
+        <span class="chat-dock-trigger-icon" aria-hidden="true">🤖</span>
+        <span class="chat-dock-trigger-copy"><strong>全智能体助手</strong><small>${attention}</small></span>
+      </button>
     </div>
   `;
 }
 
 /**
- * 行程调整方案单独占用一个小悬浮窗，避免候选卡片把聊天记录和输入框顶走。
- * 方案窗口和 AI 聊天窗口可以同时打开，用户可先看方案再决定下一步。
+ * 全智能体原生模式下，方案差异确认卡内联于智能体对话流展示，下线旧版独立 Proposal 浮窗。
  */
 export function floatingPlannerProposalDock() {
-  if (state.view !== 'planning' || !state.trip || !state.activeProposal) return '';
-  const proposal = state.activeProposal;
-  const candidates = Array.isArray(proposal.candidateReplacements) ? proposal.candidateReplacements : [];
-  const isTeaOrSnack = proposal.replacementMode === 'TEA_BREAK'
-    || candidates.some((c) => c.slotType === 'TEA_BREAK' || c.isTeaVenue || (c.name && (c.name.includes('茶') || c.name.includes('甜') || c.name.includes('品茗'))));
-  const isAddStop = proposal.intent?.operation === 'ADD_STOP'
-    || proposal.intent?.type === 'ADD_STOP'
-    || proposal.replacementMode === 'TEA_BREAK'
-    || proposal.replacementMode === 'DINING_ADD';
-  const isDirectReplacement = proposal.replacementMode === 'DIRECT';
-  const isDining = proposal.replacementMode === 'DINING' || proposal.replacementMode === 'DINING_ADD'
-    || candidates.some((c) => c.isDining || c.type === 'DINING');
-
-  const dockKicker = isTeaOrSnack ? 'TEA & BREAK' : (isDining ? 'LOCAL DINING' : 'TRIP DECISION');
-  const dockTitle = proposalUnavailable(proposal, state.selectedOptionId || 'option-1') ? '需要补充调整条件' : isTeaOrSnack
-    ? (isAddStop ? '特色茶歇加站预览' : '特色茶歇调整预览')
-    : (isAddStop
-      ? (isDining ? '特色加餐预览' : '新增景点游览预览')
-      : (isDirectReplacement ? '精准替换预览' : (isDining ? '地道美食调整预览' : '局部调整预览')));
-  const triggerLabel = isTeaOrSnack ? '特色茶歇' : (isAddStop ? '新增方案' : '局部调整');
-  const triggerIcon = isTeaOrSnack ? '🫖' : (isDining ? '🍲' : '🧭');
-
-  if (!state.plannerProposalDockOpen) {
-    return `
-      <button class="planner-proposal-trigger" type="button" data-action="open-planner-proposal" aria-label="打开${dockTitle}">
-        <span class="planner-proposal-trigger-icon" aria-hidden="true">${triggerIcon}</span>
-        <span><strong>${triggerLabel}</strong><small>等待你的决定</small></span>
-        <b>1</b>
-      </button>
-    `;
-  }
-  return `
-    <section class="planner-proposal-dock" role="dialog" aria-label="${dockTitle}">
-      <div class="planner-proposal-dock-head">
-        <div><span class="planner-proposal-kicker">${dockKicker}</span><strong>${dockTitle}</strong></div>
-        <button class="planner-proposal-close" type="button" data-action="close-planner-proposal" aria-label="关闭方案预览">×</button>
-      </div>
-      <div class="planner-proposal-dock-body">${plannerProposalHtml(state.activeProposal)}</div>
-    </section>
-  `;
+  return '';
 }
 
 export function renderPlannerProposalDockInDOM() {

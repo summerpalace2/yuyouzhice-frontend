@@ -2,7 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { state, normalizeChatMode } from '../../app-core/state.js';
 import { sendChatMessage } from './chat-service.js';
-import { chatMessageHtml, chatModeTabsHtml, selectedStopActionHtml } from './chat-panel.js';
+import { chatMessageHtml, chatModeTabsHtml, selectedStopActionHtml, floatingChatDock, floatingPlannerProposalDock } from './chat-panel.js';
+import { stopCard } from '../../entities/trip/stop-card.js';
+import { planView } from '../../pages/plan-page.js';
 import { handleChatAction } from './chat-action-handler.js';
 
 function sseBody(chunks) {
@@ -65,7 +67,7 @@ function setupEnv(t, fetchImpl) {
   });
 }
 
-test('切换至智能体模式仅更新模式状态并支持游客态显示', async (t) => {
+test('全智能体单一工作区始终维持 agent 模式且不渲染旧版聊天/调整切换按钮', async (t) => {
   setupEnv(t, async () => { assert.fail('切换模式不能发起网络请求'); });
   const notices = [];
   await handleChatAction({
@@ -78,11 +80,11 @@ test('切换至智能体模式仅更新模式状态并支持游客态显示', as
     persistTripWorkspace() {}
   });
   assert.equal(state.chatMode, 'agent');
-  assert.equal(notices[0][1].title, '已切换至智能体模式');
+  assert.equal(notices[0][1].title, '已启用全智能体模式');
 
   const guestTabs = chatModeTabsHtml('agent', false);
-  assert.match(guestTabs, /switch-chat-mode/);
   assert.match(guestTabs, /switch-agent-mode/);
+  assert.doesNotMatch(guestTabs, /switch-chat-mode/);
   assert.doesNotMatch(guestTabs, /switch-adjustment-mode/);
 });
 
@@ -282,4 +284,32 @@ test('create_trip_plan 新建行程实时采纳与 pin/save HIL 确认同步及�
   assert.equal(state.savedTripId, 'formal-888');
   assert.ok(invalidated.includes('trips'));
   assert.equal(normalizeChatMode(undefined), 'agent');
+
+  // 验证全智能体工作区内联渲染、高德实景/弹性休闲卡片及旧 Proposal 浮窗退场
+  state.view = 'planning';
+  state.chatDockOpen = true;
+  state.trip = {
+    title: '全智能体自由游',
+    subtitle: '轻松亲子',
+    version: 1,
+    planMode: 'AGENT_NATIVE',
+    constraints: {},
+    days: [{
+      day: 1,
+      dateLabel: '2026-11-17 · 第1天 · 亲子探索',
+      agentNotes: '今日微雨建议优先室内与短接驳',
+      stops: [
+        { id: 's1', name: '洪崖洞', type: 'SCENIC', icon: '景', verifiedSource: 'AMAP_POI', openingHours: '全天开放', bookingPolicy: '免费免预约' },
+        { id: 's2', name: '江边咖啡小憩', type: 'FREE_TIME', icon: '休', time: '15:30', duration: '约 45 分钟' }
+      ]
+    }]
+  };
+  const pageHtml = planView();
+  assert.match(pageHtml, /全智能体自由编排/);
+  assert.match(pageHtml, /planning-agent-rail/);
+  assert.match(pageHtml, /✓ 高德实景/);
+  assert.match(pageHtml, /🧘 弹性休闲/);
+  assert.equal(floatingPlannerProposalDock(), '');
+  assert.equal(floatingChatDock(), '');
+  assert.match(stopCard(state.trip.days[0].stops[0], 1, 1), /免费免预约/);
 });

@@ -237,8 +237,8 @@ export async function handleChatAction({
     return true;
   }
   if (action === 'switch-chat-mode' || action === 'switch-adjustment-mode' || action === 'switch-agent-mode') {
-    state.chatMode = action === 'switch-adjustment-mode' ? 'planner' : (action === 'switch-agent-mode' ? 'agent' : 'chat');
-    state.chatInput = action === 'switch-chat-mode' ? '' : String(target?.dataset?.prompt || '');
+    state.chatMode = 'agent';
+    state.chatInput = String(target?.dataset?.prompt || state.chatInput || '');
     persistChatMode(state, saveUserPlan, persistTripWorkspace);
     renderChatInDOM({ scrollToBottom: false }, renderView);
     announceChatMode(state.chatMode, toast);
@@ -289,6 +289,9 @@ export async function handleChatAction({
   }
   if (action === 'open-chat-dock' || action === 'close-chat-dock') {
     state.chatDockOpen = action === 'open-chat-dock';
+    if (state.view === 'planning') {
+      renderView?.();
+    }
     renderFloatingBtn();
     if (state.chatDockOpen) window.setTimeout(() => document.querySelector('#chat-input')?.focus(), 0);
     return true;
@@ -504,7 +507,7 @@ export async function handleChatAction({
       return true;
     }
 
-    const modeChanged = state.view === 'planning' && state.trip && chipAction !== 'chat_info' && state.chatMode !== 'planner';
+    const modeChanged = state.view === 'planning' && state.trip && chipAction !== 'chat_info' && state.chatMode !== 'agent';
     const actionOwner = captureWorkspace();
     const originalHtml = chipBtn.innerHTML;
     matchingSuggestions.forEach(sug => {
@@ -514,8 +517,8 @@ export async function handleChatAction({
     });
 
     if (state.view === 'planning' && state.trip && chipAction !== 'chat_info') {
-      if (state.chatMode !== 'planner') {
-        state.chatMode = 'planner';
+      if (state.chatMode !== 'agent') {
+        state.chatMode = 'agent';
         persistChatMode(state, saveUserPlan, persistTripWorkspace);
         renderChatInDOM({ scrollToBottom: false }, renderView);
       }
@@ -525,7 +528,7 @@ export async function handleChatAction({
       chipBtn.disabled = true;
       chipBtn.classList.add('is-active-loading');
       chipBtn.innerHTML = '<span class="chat-action-chip-icon">⏳</span><span class="chat-action-chip-label">正在提交调整...</span>';
-      if (modeChanged) announceChatMode('planner', toast);
+      if (modeChanged) announceChatMode('agent', toast);
       else toast(`正在为你执行：${chipLabel}...`);
       const sourceMessages = state.chatMessages;
       const previousMessageCount = sourceMessages.length;

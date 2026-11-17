@@ -12,15 +12,27 @@ export function sanitizePunctuation(text) {
 
 export function stopCard(stop, dayNumber, stopIndex = null) {
   const isDining = stop.type === 'DINING' || stop.icon === '餐';
+  const isFreeTime = stop.type === 'FREE_TIME' || stop.icon === '休';
   const route = stop.routeFromPrevious;
   const routeChip = route?.selected?.summary
     ? `${route.selectedMode || '路线'} ${route.selected.summary}`
-    : (stop.walk ? `路线 ${stop.walk}` : (isDining ? '步行即达' : '路线待计算'));
+    : (stop.walk ? `路线 ${stop.walk}` : (isDining ? '步行即达' : (isFreeTime ? '片区自由活动' : '路线待计算')));
 
-  const ticketLabel = stop.ticket || (isDining ? '人均约 40-70 元' : '免费开放 · 无需预约');
+  const ticketLabel = stop.ticket || (isDining ? '人均约 40-70 元' : (isFreeTime ? '自由安排' : '开放情况见景区公告'));
   const durationLabel = stop.duration || (isDining ? '约 60 分钟' : '约 90 分钟');
   const isSelected = Boolean(state.selectedStopId && state.selectedStopId === stop.id);
   const isPinned = Boolean(state.pinnedStopIds && state.pinnedStopIds.has(stop.id));
+
+  const verifiedBadge = stop.verifiedSource === 'AMAP_POI'
+    ? '<span class="chip chip-verified-amap">✓ 高德实景</span>'
+    : (stop.verifiedSource === 'LOCAL_CATALOG' || stop.verifiedSource === 'LOCAL_DINING'
+      ? '<span class="chip chip-verified-catalog">✓ 目录核验</span>'
+      : '');
+  const cardBorderBg = isDining
+    ? 'border-left: 5px solid #ea580c !important; background: linear-gradient(135deg, #fffcf9 0%, #fff7ed 100%) !important; box-shadow: 0 4px 16px rgba(234, 88, 12, 0.08) !important; border-top: 1px solid #ffedd5 !important; border-right: 1px solid #ffedd5 !important; border-bottom: 1px solid #fed7aa !important;'
+    : (isFreeTime
+      ? 'border-left: 5px solid #0d9488 !important; background: linear-gradient(135deg, #f0fdfa 0%, #ffffff 100%) !important; box-shadow: 0 4px 14px rgba(13, 148, 136, 0.07) !important; border-top: 1px solid #ccfbf1 !important; border-right: 1px solid #ccfbf1 !important; border-bottom: 1px solid #99f6e4 !important;'
+      : 'border-left: 5px solid #2563eb !important; background: #ffffff !important; box-shadow: 0 4px 14px rgba(37, 99, 235, 0.06) !important; border-top: 1px solid #eff6ff !important; border-right: 1px solid #eff6ff !important; border-bottom: 1px solid #dbeafe !important;');
 
   const orderNum = stopIndex !== null && stopIndex !== undefined ? String(stopIndex).padStart(2, '0') : '';
   const cleanSummary = sanitizePunctuation(stop.summary);
@@ -43,9 +55,9 @@ export function stopCard(stop, dayNumber, stopIndex = null) {
 
   return `
     <article
-      class="stop stop-card itinerary-stop-card ${isDining ? 'dining-stop-card' : 'scenic-stop-card'} ${isSelected ? 'selected-stop-card' : ''} ${isPinned ? 'pinned-stop-card' : ''}"
+      class="stop stop-card itinerary-stop-card ${isDining ? 'dining-stop-card' : (isFreeTime ? 'free-time-stop-card' : 'scenic-stop-card')} ${isSelected ? 'selected-stop-card' : ''} ${isPinned ? 'pinned-stop-card' : ''}"
       data-stop-id="${escapeHtml(stop.id)}"
-      style="display: flex !important; flex-direction: column !important; width: 100% !important; box-sizing: border-box !important; border-radius: 14px !important; transition: all 0.2s ease !important; ${isDining ? 'border-left: 5px solid #ea580c !important; background: linear-gradient(135deg, #fffcf9 0%, #fff7ed 100%) !important; box-shadow: 0 4px 16px rgba(234, 88, 12, 0.08) !important; border-top: 1px solid #ffedd5 !important; border-right: 1px solid #ffedd5 !important; border-bottom: 1px solid #fed7aa !important;' : 'border-left: 5px solid #2563eb !important; background: #ffffff !important; box-shadow: 0 4px 14px rgba(37, 99, 235, 0.06) !important; border-top: 1px solid #eff6ff !important; border-right: 1px solid #eff6ff !important; border-bottom: 1px solid #dbeafe !important;'}"
+      style="display: flex !important; flex-direction: column !important; width: 100% !important; box-sizing: border-box !important; border-radius: 14px !important; transition: all 0.2s ease !important; ${cardBorderBg}"
     >
       <div class="stop-card-main" style="width: 100% !important; min-width: 0 !important; display: flex !important; flex-direction: column !important; gap: 8px !important; box-sizing: border-box !important;">
         ${stop.departureLabel ? `
@@ -55,12 +67,13 @@ export function stopCard(stop, dayNumber, stopIndex = null) {
         ` : ''}
         <div class="stop-card-header" style="width: 100% !important; display: flex !important; align-items: center !important; justify-content: space-between !important; gap: 10px !important; flex-wrap: wrap !important;">
           <div class="stop-badge-name-group" style="display: flex !important; align-items: center !important; gap: 9px !important; min-width: 0 !important; flex-wrap: wrap !important;">
-            ${orderNum ? `<span class="stop-step-badge" style="${isDining ? 'background: #fed7aa; color: #9a3412;' : ''}">${escapeHtml(orderNum)}</span>` : ''}
-            ${stop.icon ? `<span class="stop-icon-chip tone-${escapeHtml(stop.tone || (isDining ? 'gold' : 'default'))}" style="${isDining ? 'background: #ea580c !important; color: #fff !important;' : ''}">${escapeHtml(stop.icon)}</span>` : ''}
-            <h3 class="stop-name" style="margin: 0; font-size: 16.5px; font-weight: 700; color: ${isDining ? '#9a3412' : 'var(--ink)'}; line-height: 1.35; word-break: break-word;">${escapeHtml(stop.name)}</h3>
+            ${orderNum ? `<span class="stop-step-badge" style="${isDining ? 'background: #fed7aa; color: #9a3412;' : (isFreeTime ? 'background: #99f6e4; color: #115e59;' : '')}">${escapeHtml(orderNum)}</span>` : ''}
+            ${stop.icon ? `<span class="stop-icon-chip tone-${escapeHtml(stop.tone || (isDining ? 'gold' : 'default'))}" style="${isDining ? 'background: #ea580c !important; color: #fff !important;' : (isFreeTime ? 'background: #0d9488 !important; color: #fff !important;' : '')}">${escapeHtml(stop.icon)}</span>` : ''}
+            <h3 class="stop-name" style="margin: 0; font-size: 16.5px; font-weight: 700; color: ${isDining ? '#9a3412' : (isFreeTime ? '#115e59' : 'var(--ink)')}; line-height: 1.35; word-break: break-word;">${escapeHtml(stop.name)}</h3>
           </div>
-          <div class="stop-header-status" style="display: flex !important; align-items: center !important; gap: 6px !important; flex-shrink: 0 !important;">
-            ${isDining ? '<span class="chip" style="background:#ffedd5;color:#c2410c;border:1.5px solid #fdba74;font-weight:700;">🥢 餐饮赏味</span>' : '<span class="chip" style="background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;font-weight:600;">🏛️ 文旅地标</span>'}
+          <div class="stop-header-status" style="display: flex !important; align-items: center !important; gap: 6px !important; flex-shrink: 0 !important; flex-wrap: wrap !important;">
+            ${isDining ? '<span class="chip" style="background:#ffedd5;color:#c2410c;border:1.5px solid #fdba74;font-weight:700;">🥢 餐饮赏味</span>' : (isFreeTime ? '<span class="chip" style="background:#ccfbf1;color:#0f766e;border:1px solid #5eead4;font-weight:600;">🧘 弹性休闲</span>' : '<span class="chip" style="background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;font-weight:600;">🏛️ 文旅地标</span>')}
+            ${verifiedBadge}
             ${isSelected ? '<span class="chip chip-selected">✓ 已选中</span>' : ''}
             ${isPinned ? '<span class="chip chip-pinned">📌 已固定</span>' : ''}
           </div>
@@ -73,8 +86,10 @@ export function stopCard(stop, dayNumber, stopIndex = null) {
           ` : ''}
           <span class="stop-meta-item">📍 ${escapeHtml(stop.district || '重庆')}</span>
           <span class="stop-meta-divider">·</span>
-          <span class="stop-meta-item">⏳ ${isDining ? '建议用餐' : '建议游玩'} ${escapeHtml(durationLabel)}</span>
+          <span class="stop-meta-item">⏳ ${isDining ? '建议用餐' : (isFreeTime ? '建议预留' : '建议游玩')} ${escapeHtml(durationLabel)}</span>
+          ${stop.openingHours ? `<span class="stop-meta-divider">·</span><span class="stop-meta-item">🚪 ${escapeHtml(stop.openingHours)}</span>` : ''}
         </div>
+        ${stop.bookingPolicy ? `<div class="stop-booking-note" style="font-size:12px;color:#0f766e;background:#f0fdfa;border:1px solid #ccfbf1;padding:4px 9px;border-radius:6px;width:fit-content;">📋 ${escapeHtml(stop.bookingPolicy)}</div>` : ''}
 
         ${cleanSummary ? `<p class="stop-summary" style="margin: 2px 0 0; color: var(--ink-secondary); font-size: 13.5px; line-height: 1.6; word-break: break-word;">${escapeHtml(cleanSummary)}</p>` : ''}
 

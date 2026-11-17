@@ -6404,6 +6404,27 @@ img, svg, video, canvas { max-width: 100%; }
   margin-bottom: 4px;
 }
 
+.agent-trace-details > summary.agent-trace-head {
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  list-style: none;
+  margin-bottom: 0;
+}
+.agent-trace-details[open] > summary.agent-trace-head {
+  margin-bottom: 6px;
+}
+.agent-trace-details > summary.agent-trace-head::-webkit-details-marker {
+  display: none;
+}
+.agent-trace-toggle {
+  font-size: 11px;
+  font-weight: 500;
+  color: #64748b;
+}
+
 .agent-tool-pills {
   display: flex;
   flex-wrap: wrap;
@@ -6414,6 +6435,10 @@ img, svg, video, canvas { max-width: 100%; }
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   padding: 2px 8px;
   border-radius: 999px;
   font-size: 11.5px;
@@ -6521,4 +6546,200 @@ img, svg, video, canvas { max-width: 100%; }
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.page-planning-agent {
+  max-width: 1460px;
+}
+
+.page-planning-agent {
+  width: min(1560px, calc(100% - 36px));
+}
+
+.workspace-agent-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+
+.workspace-agent-shell.has-agent-rail {
+  grid-template-columns: minmax(0, 1fr) 410px;
+}
+
+.workspace-agent-shell .workspace-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 18px;
+}
+
+.workspace-left-rail {
+  display: grid;
+  grid-template-columns: minmax(260px, 330px) minmax(0, 1fr);
+  gap: 16px;
+  align-items: stretch;
+}
+
+.workspace-agent-shell .map-head-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.workspace-agent-shell .map-action-btn,
+.workspace-agent-shell .fullscreen-map-btn {
+  white-space: nowrap;
+}
+
+.workspace-agent-shell .trip-map {
+  height: 250px;
+}
+
+@media (min-width: 1520px) {
+  .workspace-agent-shell.has-agent-rail .workspace-grid {
+    grid-template-columns: 330px minmax(0, 1fr);
+  }
+  .workspace-left-rail {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .workspace-agent-shell .trip-map {
+    height: 300px;
+  }
+}
+
+.planning-agent-rail {
+  position: sticky;
+  top: 78px;
+  height: calc(100vh - 98px);
+  min-height: 540px;
+}
+
+.chat-panel-inline {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.chat-panel-inline > .panel-pad {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.chat-panel-inline .chat-transcript {
+  flex: 1 1 auto;
+  min-height: 220px;
+  max-height: none;
+  overflow-y: auto;
+}
+
+.agent-drafting-stage {
+  padding: 44px 28px;
+  min-height: 540px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.agent-drafting-card {
+  width: 100%;
+  max-width: 580px;
+  text-align: center;
+}
+
+.agent-drafting-prompt {
+  margin: 16px auto;
+  padding: 12px 16px;
+  border-radius: 10px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  font-size: 13.5px;
+  color: var(--ink);
+  text-align: left;
+  line-height: 1.6;
+}
+
+.agent-drafting-steps {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin: 14px 0 20px;
+}
+
+.agent-drafting-steps span {
+  padding: 5px 11px;
+  border-radius: 999px;
+  background: #eff6ff;
+  border: 1px solid #dbeafe;
+  color: #1e40af;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.agent-drafting-actions {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.day-agent-note {
+  margin: 6px 0 10px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: #eff6ff;
+  border: 1px solid #dbeafe;
+  color: #1e3a8a;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.chip-verified-amap {
+  background: #dcfce7;
+  color: #15803d;
+  border: 1px solid #86efac;
+  font-weight: 600;
+}
+
+.chip-verified-catalog {
+  background: #e0f2fe;
+  color: #0369a1;
+  border: 1px solid #bae6fd;
+  font-weight: 600;
+}
+
+.agent-confirm-days-preview {
+  margin: 6px 0 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  font-size: 12px;
+  color: #334155;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+@media (max-width: 1180px) {
+  .workspace-agent-shell.has-agent-rail {
+    grid-template-columns: 1fr;
+  }
+  .workspace-agent-shell .workspace-grid {
+    grid-template-columns: 1fr;
+  }
+  .workspace-left-rail {
+    grid-template-columns: 1fr;
+  }
+  .planning-agent-rail {
+    position: static;
+    height: auto;
+    min-height: 440px;
+  }
 }

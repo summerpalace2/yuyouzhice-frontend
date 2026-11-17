@@ -70,12 +70,12 @@ export function renderView() {
 export function renderFloatingBtn() {
   const mount = document.getElementById('floating-btn-mount');
   if (!mount) return;
-  if (state.view !== 'planning' || !state.trip) state.chatDockOpen = false;
+  if (state.view !== 'planning') state.chatDockOpen = false;
   if (state.view !== 'planning' || !state.trip) state.plannerProposalDockOpen = false;
   // 移动端聊天抽屉打开时，页面与聊天记录不能同时响应同一段滑动手势。
   // 由 body 锁定外层滚动，滚动职责只交给 transcript，关闭后立即还原。
-  document.body.classList.toggle('chat-dock-open', Boolean(state.chatDockOpen));
-  mount.innerHTML = `${floatingAdminReturnBtn()}${floatingChatDock()}<div id="planner-proposal-dock-root" class="planner-proposal-dock-root ${state.chatDockOpen ? 'with-chat' : ''}">${floatingPlannerProposalDock()}</div>`;
+  document.body.classList.toggle('chat-dock-open', Boolean(state.chatDockOpen && state.view === 'planning'));
+  mount.innerHTML = `${floatingAdminReturnBtn()}${floatingChatDock()}<div id="planner-proposal-dock-root" class="planner-proposal-dock-root">${floatingPlannerProposalDock()}</div>`;
 }
 
 /**

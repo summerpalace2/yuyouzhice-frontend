@@ -162,7 +162,9 @@ export async function openSavedTrip(id, { renderLoader, render, scheduleTripMap,
       && localMeta.chatEpoch === workspace.chatEpoch
       && Number(localMeta.workspaceRevision) === Number(workspace.workspaceRevision);
     const chatMessages = recoverLocal ? localMessages : remoteMessages;
-    const chatMode = workspace.chatMode === 'planner' ? 'planner' : 'chat';
+    const chatMode = workspace.chatMode === 'planner'
+      ? 'planner'
+      : (workspace.chatMode === 'chat' ? 'chat' : 'agent');
     const itineraryMemorySnapshot = workspace.itineraryMemorySnapshot || null;
     tripChatHistories[tripChatKey] = chatMessages;
     let workspaceSync = null;
