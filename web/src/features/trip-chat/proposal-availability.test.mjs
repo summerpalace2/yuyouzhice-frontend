@@ -18,13 +18,16 @@ test('无候选显示真实失败原因，不能呈现强制应用或路线警�
 test('旧对话快捷操作按当前行程重新发起，同时更新模式按钮和醒目通知', async () => {
   const classes = new Set();
   const button = { dataset: { chipAction: 'adjust_plan', chipPayload: '加入甜品停留', chipLabel: '加入甜品' },
-    closest() { return this; }, classList: { contains: x => classes.has(x), add: x => classes.add(x) } };
+    closest() { return this; }, classList: { contains: x => classes.has(x), add: x => classes.add(x), remove: x => classes.delete(x) } };
   const notices = [];
   let rendered = 0, sent = '';
   const state = { user: { id: 'fixture' }, view: 'planning', trip: { version: 6 }, chatMode: 'chat', chatMessages: [] };
   await handleChatAction({ action: 'execute-action-chip', target: button, state,
     saveUserPlan() {}, persistTripWorkspace() {}, renderChatInDOM() { rendered++; },
-    toast: (...args) => notices.push(args), sendChatMessage: async args => { sent = args.inputOverride; } });
+    toast: (...args) => notices.push(args), sendChatMessage: async args => {
+      sent = args.inputOverride;
+      state.chatMessages.push({ role: 'user', content: sent }, { role: 'assistant', content: '调整预览已生成', pending: false });
+    } });
   assert.equal(state.chatMode, 'planner');
   assert.ok(rendered > 0);
   assert.equal(sent, '加入甜品停留');

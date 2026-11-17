@@ -1,4 +1,6 @@
 import { resetConversationContext } from './chat-service.js';
+import { executeAgentConfirmDecision } from './agent-service.js';
+import { getGuestChatSessionId, getChatMemorySessionId } from '../../app-core/user-store.js';
 import { acknowledgeChatModeGuide, announceChatMode } from './chat-mode-guide.js';
 import { request as apiRequest } from '../../shared/api/client.js';
 import { saveGuestMemories } from '../../app-core/user-store.js';
@@ -105,9 +107,11 @@ export async function handleChatAction({
     renderChatInDOM({ scrollToBottom: false }, renderView);
 
     if (state.selectedStopId) {
-      toast(state.chatMode === 'planner'
-        ? (isDiningStop ? `已选中【${targetStopName || '当前餐饮'}】，可在右侧选择换餐策略。` : `已选中【${targetStopName || '当前站点'}】，可在右侧选择局部调整策略。`)
-        : (isDiningStop ? `已选中【${targetStopName || '当前餐饮'}】，可继续咨询招牌特色与排队建议。` : `已选中【${targetStopName || '当前站点'}】，聊天模式可继续咨询景点的详细信息。`));
+      toast(state.chatMode === 'agent'
+        ? `已选中【${targetStopName || '当前站点'}】，可让智能体直接预演替换、算路或固定站点。`
+        : (state.chatMode === 'planner'
+          ? (isDiningStop ? `已选中【${targetStopName || '当前餐饮'}】，可在右侧选择换餐策略。` : `已选中【${targetStopName || '当前站点'}】，可在右侧选择局部调整策略。`)
+          : (isDiningStop ? `已选中【${targetStopName || '当前餐饮'}】，可继续咨询招牌特色与排队建议。` : `已选中【${targetStopName || '当前站点'}】，聊天模式可继续咨询景点的详细信息。`)));
     } else {
       toast(`已取消选择${targetStopName ? `【${targetStopName}】` : ''}。`);
     }
@@ -123,8 +127,9 @@ export async function handleChatAction({
     state.selectedStopId = stopId;
     state.activeDay = Number(target.dataset.day || 1);
     state.suggestionDismissed = false;
-    const switchedMode = state.chatMode !== 'planner';
-    state.chatMode = 'planner';
+    const keepAgent = state.chatMode === 'agent';
+    const switchedMode = !keepAgent && state.chatMode !== 'planner';
+    if (!keepAgent) state.chatMode = 'planner';
     state.chatDockOpen = true;
     persistChatMode(state, saveUserPlan, persistTripWorkspace);
     if (typeof document !== 'undefined') {
@@ -231,13 +236,37 @@ export async function handleChatAction({
     renderPlannerProposalDockInDOM();
     return true;
   }
-  if (action === 'switch-chat-mode' || action === 'switch-adjustment-mode') {
-    state.chatMode = action === 'switch-chat-mode' ? 'chat' : 'planner';
-    state.chatInput = action === 'switch-chat-mode' ? '' : String(target.dataset.prompt || '');
+  if (action === 'switch-chat-mode' || action === 'switch-adjustment-mode' || action === 'switch-agent-mode') {
+    state.chatMode = action === 'switch-adjustment-mode' ? 'planner' : (action === 'switch-agent-mode' ? 'agent' : 'chat');
+    state.chatInput = action === 'switch-chat-mode' ? '' : String(target?.dataset?.prompt || '');
     persistChatMode(state, saveUserPlan, persistTripWorkspace);
     renderChatInDOM({ scrollToBottom: false }, renderView);
     announceChatMode(state.chatMode, toast);
     return true;
+  }
+  if (action === 'agent-confirm-approve' || action === 'agent-confirm-cancel') {
+    const confirmId = String(target?.dataset?.confirmId || '').trim();
+    const messageIndex = Number.parseInt(target?.dataset?.messageIndex || '-1', 10);
+    const guestOrTripChatKey = !state.user && state.view === 'guest-chat'
+      ? getGuestChatSessionId()
+      : (state.chatSessionId || getTripChatKey?.(state.savedTripId, state.sessionId) || 'default');
+    const memorySessionId = getChatMemorySessionId(guestOrTripChatKey, state.user?.id);
+    return executeAgentConfirmDecision({
+      confirmId,
+      approved: action === 'agent-confirm-approve',
+      messageIndex,
+      memorySessionId,
+      renderView,
+      scheduleTripMap,
+      renderChatInDOM,
+      saveUserChats,
+      saveUserPlan,
+      persistTripWorkspace,
+      getTripChatKey,
+      invalidatePageCache,
+      toast,
+      request
+    });
   }
   if (action === 'request-other-proposals') {
     if (state.chatLoading) {
@@ -332,6 +361,10 @@ export async function handleChatAction({
         state.chatMode = 'planner';
         announceChatMode('planner', toast);
         renderChatInDOM({ scrollToBottom: false }, renderView);
+      } else if (target.dataset.mode === 'agent' && state.chatMode !== 'agent') {
+        state.chatMode = 'agent';
+        announceChatMode('agent', toast);
+        renderChatInDOM({ scrollToBottom: false }, renderView);
       } else if (target.dataset.mode === 'chat' && state.chatMode !== 'chat') {
         state.chatMode = 'chat';
         announceChatMode('chat', toast);
@@ -353,18 +386,18 @@ export async function handleChatAction({
       return true;
     }
 
-    if (state.chatLoading) {
-      // 方案 C：若用户在生成中点击，立即自动打断当前回复，并直接执行所选卡片！
-      cancelChatMessage();
-      state.chatLoading = false;
-    }
-
     const chipAction = String(chipBtn.dataset.chipAction || '').trim();
     const chipPayload = String(chipBtn.dataset.chipPayload || '').trim();
     const chipLabel = String(chipBtn.dataset.chipLabel || '').trim();
 
     const matchingSuggestions = (state.chatMessages || []).flatMap(msg => msg.actionableSuggestions || [])
       .filter(sug => sug.action === chipAction && (sug.payload === chipPayload || sug.label === chipLabel));
+    if (matchingSuggestions.some(sug => sug.sending)) return true;
+    if (state.chatLoading) {
+      // A different suggestion may replace an in-progress reply.
+      cancelChatMessage();
+      state.chatLoading = false;
+    }
 
     if (chipAction === 'save_slot_preference' || chipAction === 'save_memory') {
       const workspaceOwner = captureWorkspace();
@@ -472,7 +505,13 @@ export async function handleChatAction({
     }
 
     const modeChanged = state.view === 'planning' && state.trip && chipAction !== 'chat_info' && state.chatMode !== 'planner';
-    matchingSuggestions.forEach(sug => { sug.applied = true; });
+    const actionOwner = captureWorkspace();
+    const originalHtml = chipBtn.innerHTML;
+    matchingSuggestions.forEach(sug => {
+      sug.applied = false;
+      // This flag is only for the live UI; do not persist a disabled chip on refresh.
+      Object.defineProperty(sug, 'sending', { value: true, writable: true, configurable: true, enumerable: false });
+    });
 
     if (state.view === 'planning' && state.trip && chipAction !== 'chat_info') {
       if (state.chatMode !== 'planner') {
@@ -484,11 +523,39 @@ export async function handleChatAction({
     const promptText = chipPayload || chipLabel;
     if (promptText) {
       chipBtn.disabled = true;
-      chipBtn.classList.add('is-applied');
-      chipBtn.innerHTML = `<span class="chat-action-chip-icon">✓</span><span class="chat-action-chip-label">已发起调整...</span>`;
+      chipBtn.classList.add('is-active-loading');
+      chipBtn.innerHTML = '<span class="chat-action-chip-icon">⏳</span><span class="chat-action-chip-label">正在提交调整...</span>';
       if (modeChanged) announceChatMode('planner', toast);
       else toast(`正在为你执行：${chipLabel}...`);
-      await sendChatMessage({ inputOverride: promptText, preserveInput: true, renderView, scheduleTripMap });
+      const sourceMessages = state.chatMessages;
+      const previousMessageCount = sourceMessages.length;
+      let sendError = null;
+      try {
+        await sendChatMessage({ inputOverride: promptText, preserveInput: true, renderView, scheduleTripMap });
+      } catch (error) {
+        sendError = error;
+      } finally {
+        matchingSuggestions.forEach(sug => { delete sug.sending; });
+      }
+      if (!actionOwner.owns() || state.chatMessages !== sourceMessages) return true;
+      const response = sourceMessages.slice(previousMessageCount).find(message => message.role === 'assistant');
+      const failed = Boolean(sendError) || !response || Boolean(response.error)
+        || ['auth', 'temporary'].includes(response.failureKind)
+        || /本次回复已停止/.test(response.content || '');
+      chipBtn.classList.remove('is-active-loading');
+      if (failed) {
+        matchingSuggestions.forEach(sug => { sug.applied = false; });
+        chipBtn.disabled = false;
+        chipBtn.classList.remove('is-applied');
+        chipBtn.innerHTML = originalHtml;
+        if (sendError) toast(sendError?.message || '调整未能提交，请重试。');
+        renderChatInDOM({ scrollToBottom: false }, renderView);
+        return true;
+      }
+      matchingSuggestions.forEach(sug => { sug.applied = true; });
+      chipBtn.classList.add('is-applied');
+      chipBtn.innerHTML = '<span class="chat-action-chip-icon">✓</span><span class="chat-action-chip-label">已发起调整</span>';
+      renderChatInDOM({ scrollToBottom: false }, renderView);
     }
     return true;
   }

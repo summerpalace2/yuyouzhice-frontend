@@ -6,6 +6,7 @@ import { clearPageCache } from '../../app-core/page-cache.js';
 import { detachChatWorkspace } from '../trip-chat/chat-service.js';
 import { openSavedTrip } from '../trip-save/save-service.js';
 import { invalidateAuthentication, captureAuthentication, captureWorkspace } from '../../app-core/workspace-lifecycle.js';
+import { transitionMainView } from '../../app-core/main-view-transition.js';
 
 export async function restoreAuthSession(renderCallbacks = {}) {
   // 会话接口可能比首屏慢；记录启动时视图，避免请求返回游客状态时覆盖
@@ -33,7 +34,7 @@ export async function restoreAuthSession(renderCallbacks = {}) {
       state.user = null;
       state.csrfToken = null;
       state.profile = { ...(state.profile || {}), memories: loadGuestMemories() };
-      if (state.view === viewAtSessionCheck) state.view = 'guest-chat';
+      if (state.view === viewAtSessionCheck) transitionMainView(state, 'guest-chat');
     }
 
     if (!authentication.current()) return;
@@ -55,8 +56,8 @@ export async function restoreAuthSession(renderCallbacks = {}) {
       state.chatProposal = null;
       state.chatWorkspace = null;
       state.tripChatHistories = loadUserChats(userId);
-      state.view = 'trips';
-      await openSavedTrip(activePlan.savedTripId);
+      transitionMainView(state, 'trips');
+      await openSavedTrip(activePlan.savedTripId, { preserveDraft: true });
       if (!authentication.current() || state.user?.id !== userId) return;
       if (renderCallbacks.renderHeader) renderCallbacks.renderHeader();
       if (renderCallbacks.renderView) renderCallbacks.renderView();
@@ -68,13 +69,13 @@ export async function restoreAuthSession(renderCallbacks = {}) {
       state.trip = activePlan.trip;
       state.sessionId = activePlan.sessionId;
       state.savedTripId = activePlan.savedTripId;
-      state.chatMode = activePlan.chatMode === 'planner' ? 'planner' : 'chat';
+      state.chatMode = (activePlan.chatMode === 'agent' || activePlan.chatMode === 'planner' || activePlan.chatMode === 'chat') ? activePlan.chatMode : 'agent';
       state.prompt = activePlan.prompt || state.prompt;
       state.activeProposal = activePlan.activeProposal || null;
       state.selectedOptionId = activePlan.selectedOptionId || 'option-1';
-      if (activePlan.view && state.user) state.view = activePlan.view;
+      if (activePlan.view && state.user) transitionMainView(state, activePlan.view);
     } else if (state.user && state.view === 'guest-chat') {
-      state.view = 'home';
+      transitionMainView(state, 'home');
     }
     state.tripChatHistories = loadUserChats(state.user?.id);
     const chatKey = guestChat
@@ -86,7 +87,7 @@ export async function restoreAuthSession(renderCallbacks = {}) {
       state.savedTripId = null;
       state.itineraryMemorySnapshot = null;
       state.activeProposal = null;
-      state.chatMode = 'chat';
+      state.chatMode = 'agent';
       state.chatInput = '';
       state.chatMeta = null;
       state.chatRoute = 'idle';
@@ -107,6 +108,10 @@ export async function restoreAuthSession(renderCallbacks = {}) {
 
 export async function logout(renderCallback) {
   invalidateAuthentication();
+  state.draftBackupFailed = false;
+  state.draftBackupFailedTripId = null;
+  state.draftBackupAvailable = false;
+  state.draftBackup = null;
   detachChatWorkspace();
   state.loading = false;
   if (state.user) {
@@ -131,8 +136,8 @@ export async function logout(renderCallback) {
   state.chatRoute = 'idle';
   state.selectedStopId = null;
   if (state.selectedStopIds instanceof Set) state.selectedStopIds.clear();
-  state.chatMode = 'chat';
-  state.view = 'guest-chat';
+  state.chatMode = 'agent';
+  transitionMainView(state, 'guest-chat');
   toast('已安全退出登录。');
   if (renderCallback) renderCallback();
 }

@@ -5,6 +5,7 @@ import { toast } from '../shared/ui/toast.js';
 import { getTripChatKey, loadUserChats, saveUserChats } from '../app-core/user-store.js';
 import { persistTripWorkspace } from '../features/trip-workspace/workspace-service.js';
 import { isPageDataFresh, markPageDataFresh } from '../app-core/page-cache.js';
+import { transitionMainView } from '../app-core/main-view-transition.js';
 
 export function historyView() {
   if (!state.user) {
@@ -117,7 +118,7 @@ export async function loadHistorySession(id, { renderLoader, render, scheduleTri
     if (state.savedTripId) state.trip.savedTripId = state.savedTripId;
     state.prompt = data.session.prompt || state.prompt;
     state.historySync = data.sync || state.historySync;
-    state.view = 'planning';
+    transitionMainView(state, 'planning');
     const chatKey = getTripChatKey(state.savedTripId, state.sessionId);
     const workspace = data.workspace && typeof data.workspace === 'object' ? data.workspace : {};
     state.tripChatHistories = { ...loadUserChats(state.user?.id), ...(state.tripChatHistories || {}) };
@@ -125,7 +126,7 @@ export async function loadHistorySession(id, { renderLoader, render, scheduleTri
     const remoteMessages = Array.isArray(workspace.chatMessages) ? workspace.chatMessages : [];
     state.chatSessionId = chatKey;
     state.chatMessages = remoteMessages.length >= localMessages.length ? remoteMessages : localMessages;
-    state.chatMode = workspace.chatMode === 'planner' ? 'planner' : 'chat';
+    state.chatMode = (workspace.chatMode === 'agent' || workspace.chatMode === 'planner' || workspace.chatMode === 'chat') ? workspace.chatMode : 'agent';
     state.itineraryMemorySnapshot = workspace.itineraryMemorySnapshot || null;
     state.tripChatHistories[chatKey] = state.chatMessages;
     saveUserChats(state.user?.id, state.tripChatHistories);

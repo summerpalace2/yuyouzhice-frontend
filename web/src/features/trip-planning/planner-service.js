@@ -5,6 +5,7 @@ import { saveUserPlan, saveUserChats, loadUserChats, getTripChatKey } from '../.
 import { invalidatePageCache } from '../../app-core/page-cache.js';
 import { detachChatWorkspace } from '../trip-chat/chat-service.js';
 import { captureWorkspace } from '../../app-core/workspace-lifecycle.js';
+import { transitionMainView } from '../../app-core/main-view-transition.js';
 
 export async function plan({
   prompt = null,
@@ -19,7 +20,7 @@ export async function plan({
   scheduleTripMap
 } = {}) {
   if (!state.user) {
-    state.view = 'auth';
+    transitionMainView(state, 'auth');
     state.authMode = 'login';
     state.loginError = '';
     if (renderHeader) renderHeader();
@@ -43,7 +44,7 @@ export async function plan({
   state.planRequestError = null;
   state.loading = true;
   state.loadingPhase = '理解旅行条件';
-  state.view = 'planning';
+  transitionMainView(state, 'planning');
   if (renderView) renderView();
   if (renderHeader) renderHeader();
   if (renderLoader) renderLoader();
@@ -119,7 +120,7 @@ export async function plan({
     state.planRequestError = state.trip
       ? { message: error.message || '新规划请求暂时未完成。', prompt: submittedPrompt }
       : null;
-    if (!state.trip) state.view = 'home';
+    if (!state.trip) transitionMainView(state, 'home');
     toast(error.message);
   } finally {
     window.clearInterval(phaseTimer);

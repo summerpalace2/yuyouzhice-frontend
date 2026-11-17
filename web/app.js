@@ -213,14 +213,20 @@ export {
   openSavedTrip,
   loadTrips,
   deleteTrip,
-  exportTripPdf
+  exportTripPdf,
+  getDraftBackup,
+  restoreDraftBackup,
+  discardDraftBackup
 } from './src/features/trip-save/save-service.js';
 import {
   saveTrip,
   openSavedTrip,
   loadTrips,
   deleteTrip,
-  exportTripPdf
+  exportTripPdf,
+  getDraftBackup,
+  restoreDraftBackup,
+  discardDraftBackup
 } from './src/features/trip-save/save-service.js';
 
 export {
@@ -355,7 +361,8 @@ const ACTION_OWNER = new Map([
     'toggle-pin-stop', 'select-option', 'dismiss-suggestion', 'reopen-suggestion',
     'replan-v1', 'confirm-planner-proposal', 'force-apply-planner-proposal',
     'open-planner-proposal', 'close-planner-proposal', 'switch-chat-mode',
-    'switch-adjustment-mode', 'request-other-proposals', 'open-chat-dock',
+    'switch-adjustment-mode', 'switch-agent-mode', 'agent-confirm-approve',
+    'agent-confirm-cancel', 'request-other-proposals', 'open-chat-dock',
     'close-chat-dock', 'dismiss-planner-proposal', 'reset-chat',
     'unpin-and-retry', 'cancel-chat', 'retry-chat', 'quick-ai-action',
     'quick-same-district-replace', 'execute-action-chip',
@@ -678,7 +685,7 @@ if (eventRoot) {
 
   eventRoot.addEventListener('change', (event) => {
     if (event.target.id === 'chat-mode') {
-      state.chatMode = event.target.value === 'planner' ? 'planner' : 'chat';
+      state.chatMode = (event.target.value === 'agent' || event.target.value === 'planner') ? event.target.value : 'chat';
       saveUserPlan(state.user?.id, {
         trip: state.trip,
         sessionId: state.sessionId,
@@ -689,9 +696,11 @@ if (eventRoot) {
       });
       void persistTripWorkspace();
       renderChatInDOM({ scrollToBottom: false }, renderView);
-      toast(state.chatMode === 'planner'
-        ? '已切换到局部调整：只处理当前行程片段，确认后才会应用。'
-        : '已切换到聊天：可以继续咨询景点、天气和出行建议。');
+      toast(state.chatMode === 'agent'
+        ? '已切换到智能体模式：自主联动工具查证与预演，写操作须经你确认。'
+        : (state.chatMode === 'planner'
+          ? '已切换到局部调整：只处理当前行程片段，确认后才会应用。'
+          : '已切换到聊天：可以继续咨询景点、天气和出行建议。'));
     }
   });
 
@@ -873,7 +882,7 @@ function buildPromptFromConstraints(c) {
           state.sessionId = savedPlan.sessionId;
           state.savedTripId = savedPlan.savedTripId;
           state.prompt = savedPlan.prompt || state.prompt;
-          state.chatMode = savedPlan.chatMode === 'planner' ? 'planner' : 'chat';
+          state.chatMode = (savedPlan.chatMode === 'agent' || savedPlan.chatMode === 'planner' || savedPlan.chatMode === 'chat') ? savedPlan.chatMode : 'agent';
           state.activeProposal = savedPlan.activeProposal || null;
           state.plannerProposalDockOpen = false;
           state.selectedOptionId = savedPlan.selectedOptionId || 'option-1';
@@ -882,10 +891,15 @@ function buildPromptFromConstraints(c) {
       }
       if (enteredFromAuthPage && state.view === 'auth') state.view = state.trip ? 'planning' : 'home';
 
-      state.tripChatHistories = loadUserChats(state.user?.id);
-      const chatKey = getTripChatKey(state.savedTripId, state.sessionId);
-      state.chatSessionId = chatKey;
-      state.chatMessages = state.tripChatHistories[chatKey] || [];
+      const openFormal = typeof openSavedTrip === 'function' ? openSavedTrip : globalThis.openSavedTrip;
+      if (state.savedTripId && openFormal) {
+        await openFormal(state.savedTripId, { preserveDraft: true });
+      } else {
+        state.tripChatHistories = loadUserChats(state.user?.id);
+        const chatKey = getTripChatKey(state.savedTripId, state.sessionId);
+        state.chatSessionId = chatKey;
+        state.chatMessages = state.tripChatHistories[chatKey] || [];
+      }
 
       renderModals();
       renderHeader();
@@ -908,6 +922,7 @@ function buildPromptFromConstraints(c) {
     } finally {
       state.loading = false;
       renderLoader();
+      if (state.view !== 'auth') renderView();
     }
   });
 
@@ -1248,6 +1263,21 @@ function buildPromptFromConstraints(c) {
     }
     if (action === 'confirm-replan') await doConfirmReplan();
     if (action === 'save') await doSaveTrip();
+    if (action === 'restore-draft-backup') {
+      await restoreDraftBackup(target.dataset.id || state.savedTripId, {
+        render: renderView,
+        renderView,
+        scheduleTripMap
+      });
+    }
+    if (action === 'retry-draft-backup') {
+      await openSavedTrip(target.dataset.id || state.savedTripId, { preserveDraft: true, render: renderView, scheduleTripMap });
+    }
+    if (action === 'discard-draft-backup') {
+      discardDraftBackup(target.dataset.id || state.savedTripId, {
+        render: renderView
+      });
+    }
     if (action === 'feedback-open') {
       state.feedbackOpen = true;
       renderModals();

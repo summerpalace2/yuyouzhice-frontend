@@ -1,3 +1,5 @@
+import { transitionMainView as setMainView } from './main-view-transition.js';
+
 /**
  * 处理会改变主页面或认证页面的导航动作。
  *
@@ -49,7 +51,7 @@ export function handleNavigationAction({
     const requestedView = target.dataset.view;
     const protectedViews = ['home', 'planning', 'explore', 'trips', 'history', 'profile', 'admin'];
     if (!state.user && protectedViews.includes(requestedView)) {
-      state.view = 'auth';
+      setMainView(state, 'auth');
       state.authMode = 'login';
       state.loginError = '';
       renderHeader();
@@ -66,7 +68,7 @@ export function handleNavigationAction({
         toast('只有管理员账号可以进入控制中心。');
         return true;
       }
-      state.view = 'admin';
+      setMainView(state, 'admin');
       if (state.adminOverview && isPageDataFresh('admin', { maxAgeMs: 30_000 })) {
         state.adminLoading = false;
         renderHeader();
@@ -89,7 +91,7 @@ export function handleNavigationAction({
       state.chatInput = '';
       state.chatMeta = null;
       state.chatRoute = 'idle';
-      state.chatMode = 'chat';
+      state.chatMode = 'agent';
       state.trip = null;
       state.sessionId = null;
       state.savedTripId = null;
@@ -100,7 +102,7 @@ export function handleNavigationAction({
       if (state.pinnedStopIds instanceof Set) state.pinnedStopIds.clear();
     }
 
-    state.view = requestedView;
+    setMainView(state, requestedView);
     if (state.view === 'planning' && !state.trip) {
       const userPlan = loadUserPlan(state.user?.id);
       if (userPlan?.trip) {
@@ -108,7 +110,7 @@ export function handleNavigationAction({
         state.sessionId = userPlan.sessionId;
         state.savedTripId = userPlan.savedTripId;
         state.prompt = userPlan.prompt || state.prompt;
-        state.chatMode = userPlan.chatMode === 'planner' ? 'planner' : 'chat';
+        state.chatMode = (userPlan.chatMode === 'planner' || userPlan.chatMode === 'chat' || userPlan.chatMode === 'agent') ? userPlan.chatMode : 'agent';
         state.activeProposal = userPlan.activeProposal || null;
         state.selectedOptionId = userPlan.selectedOptionId || 'option-1';
         const chatKey = getTripChatKey(state.savedTripId, state.sessionId);
@@ -137,7 +139,7 @@ export function handleNavigationAction({
     }
     const section = target.dataset.section || 'overview';
     if (state.view === 'admin' && switchAdminSectionInDOM(section)) return true;
-    state.view = 'admin';
+    setMainView(state, 'admin');
     state.adminSection = section;
     const adminDataFresh = state.adminOverview && isPageDataFresh('admin', { maxAgeMs: 30_000 });
     if (!adminDataFresh) loadAdminOverviewInBackground();
@@ -153,7 +155,7 @@ export function handleNavigationAction({
       return true;
     }
     state.adminPerspective = true;
-    state.view = state.trip ? 'planning' : 'home';
+    setMainView(state, state.trip ? 'planning' : 'home');
     renderHeader();
     renderView();
     renderFloatingBtn();
@@ -164,7 +166,7 @@ export function handleNavigationAction({
   }
 
   if (action === 'login' || action === 'open-auth-page') {
-    state.view = 'auth';
+    setMainView(state, 'auth');
     state.authMode = action === 'open-auth-page' && target.dataset.mode === 'register' ? 'register' : 'login';
     state.loginError = '';
     state.loginOpen = false;
@@ -185,7 +187,7 @@ export function handleNavigationAction({
   if (action === 'close-login') {
     state.loginOpen = false;
     if (state.view === 'auth') {
-      state.view = state.user ? 'home' : 'guest-chat';
+      setMainView(state, state.user ? 'home' : 'guest-chat');
       renderHeader();
       renderView();
       renderFloatingBtn();

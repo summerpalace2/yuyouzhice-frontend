@@ -7,8 +7,9 @@ import type {
   HistorySessionRecord,
   ExploreItem
 } from '@/shared/types/contracts';
-import { request } from '@/shared/api/client';
+import { plannerIdempotencyKey, request } from '@/shared/api/client';
 import { useUiStore } from './ui';
+import { useAuthStore } from './auth';
 
 export const GOLDEN_PROMPT = '周六下午到重庆，周日晚上离开，带父母，希望少走路，预算有限，喜欢城市、人文和夜景。';
 
@@ -52,6 +53,9 @@ export const useTripStore = defineStore('trip', () => {
 
   // Collections
   const savedTrips = ref<SavedTripRecord[] | null>(null);
+  const savedTripsLoadError = ref('');
+  let savedTripsRequestGeneration = 0;
+const openOperationKeys = new Map<string, string>();
   const historySessions = ref<HistorySessionRecord[] | null>(null);
   const historySync = ref<{ latestUpdatedAt?: string } | null>(null);
   const profile = ref<any | null>(null);
@@ -253,6 +257,18 @@ export const useTripStore = defineStore('trip', () => {
   }
 
   async function openSavedTrip(id: string) {
+    const authStore = useAuthStore();
+    const operationScope = `${authStore.user?.id || 'unknown'}:${id}`;
+    const operationStorageKey = `yuyouzhice:trip-open:${operationScope}`;
+    let operationKey = openOperationKeys.get(operationScope) || '';
+    try {
+      operationKey = window.sessionStorage.getItem(operationStorageKey) || operationKey;
+    } catch { /* keep the in-memory retry key when session storage is unavailable */ }
+    if (!operationKey) operationKey = plannerIdempotencyKey('trip-open');
+    openOperationKeys.set(operationScope, operationKey);
+    try {
+      window.sessionStorage.setItem(operationStorageKey, operationKey);
+    } catch { /* in-memory key still covers retries in this page */ }
     loading.value = true;
     try {
       const data = await request<{
@@ -261,7 +277,12 @@ export const useTripStore = defineStore('trip', () => {
         sessionAccessToken?: string;
         trip: TripPlan;
         message?: string;
-      }>(`/api/trips/${encodeURIComponent(id)}/open`, { method: 'POST' });
+      }>(`/api/trips/${encodeURIComponent(id)}/open`, {
+        method: 'POST',
+        headers: { 'x-planner-open-idempotency-key': operationKey }
+      });
+      openOperationKeys.delete(operationScope);
+      try { window.sessionStorage.removeItem(operationStorageKey); } catch { /* success is already committed */ }
       sessionId.value = data.sessionId;
       savedTripId.value = data.savedTripId || id;
       sessionAccessToken.value = data.sessionAccessToken || null;
@@ -277,12 +298,30 @@ export const useTripStore = defineStore('trip', () => {
   }
 
   async function loadTrips() {
+    const authStore = useAuthStore();
+    const requestedUserId = authStore.user?.id;
+    const requestGeneration = ++savedTripsRequestGeneration;
+    if (!requestedUserId) {
+      savedTrips.value = null;
+      savedTripsLoadError.value = '';
+      return;
+    }
+    savedTripsLoadError.value = '';
     try {
       const data = await request<{ trips: SavedTripRecord[] }>('/api/trips');
+      if (requestGeneration !== savedTripsRequestGeneration || authStore.user?.id !== requestedUserId) return;
       savedTrips.value = data.trips || [];
     } catch (err: any) {
-      ui.showToast(err.message);
+      if (requestGeneration !== savedTripsRequestGeneration || authStore.user?.id !== requestedUserId) return;
+      savedTripsLoadError.value = err.message || '无法读取已保存行程，请稍后重试。';
+      ui.showToast(savedTripsLoadError.value);
     }
+  }
+
+  function resetSavedTrips() {
+    savedTripsRequestGeneration++;
+    savedTrips.value = null;
+    savedTripsLoadError.value = '';
   }
 
   async function deleteTrip(id: string) {
@@ -477,6 +516,7 @@ export const useTripStore = defineStore('trip', () => {
     userLocation,
     locating,
     savedTrips,
+    savedTripsLoadError,
     historySessions,
     historySync,
     profile,
@@ -495,6 +535,7 @@ export const useTripStore = defineStore('trip', () => {
     saveTrip,
     openSavedTrip,
     loadTrips,
+    resetSavedTrips,
     deleteTrip,
     loadExplore,
     addExploreAttraction,

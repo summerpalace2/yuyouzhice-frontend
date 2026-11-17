@@ -4,6 +4,7 @@ import { toast } from '../../shared/ui/toast.js';
 import { escapeHtml } from '../../shared/lib/security.js';
 import { renderExploreCardHtml } from '../../entities/attraction/explore-card.js';
 import { isPageDataFresh, markPageDataFresh } from '../../app-core/page-cache.js';
+import { transitionMainView } from '../../app-core/main-view-transition.js';
 
 let amapSearchDebounceTimer = null;
 
@@ -239,7 +240,7 @@ export async function addExploreAttraction(id, day = 1, { render, scheduleTripMa
       })
     });
     state.trip = data.trip;
-    state.view = 'planning';
+    transitionMainView(state, 'planning');
     toast(`已成功加入第 ${day} 天行程！`);
     if (render) render();
     if (scheduleTripMap) scheduleTripMap();

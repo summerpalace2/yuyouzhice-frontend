@@ -7,6 +7,7 @@
  * 3. 页面刷新或切换导航后，自动保留并恢复各用户的独立规划页与聊天副本；
  * 4. 每个规划独立绑定唯一聊天会话键，再次规划时旧聊天记录完整存档不丢失。
  */
+import { state } from './state.js';
 
 const PREFIX_PLAN = 'yuyouzhice_active_plan_';
 const PREFIX_CHATS = 'yuyouzhice_chat_histories_';
@@ -117,6 +118,8 @@ export function getTripChatKey(savedTripId, sessionId) {
 }
 
 export function saveUserPlan(userId, planData) {
+  // Keep the sole surviving local edit until a separate backup is confirmed.
+  if (state.draftBackupFailed && state.user?.id === userId) return;
   try {
     const key = PREFIX_PLAN + getUserKey(userId);
     if (!planData || !planData.trip) {
@@ -124,7 +127,7 @@ export function saveUserPlan(userId, planData) {
       return;
     }
     const previous = JSON.parse(window.localStorage.getItem(key) || '{}');
-    const requestedChatMode = planData.chatMode === 'planner' || planData.chatMode === 'chat'
+    const requestedChatMode = (planData.chatMode === 'agent' || planData.chatMode === 'planner' || planData.chatMode === 'chat')
       ? planData.chatMode
       : null;
     const payload = {
@@ -137,7 +140,7 @@ export function saveUserPlan(userId, planData) {
       selectedOptionId: planData.selectedOptionId || 'option-1',
       // 对话用途是当前行程的 UI 偏好。未显式传入时沿用已有值，避免刷新后
       // 用户刚选好的“聊天/局部调整”被保存行程动作覆盖。
-      chatMode: requestedChatMode || (previous.chatMode === 'planner' ? 'planner' : 'chat'),
+      chatMode: requestedChatMode || ((previous.chatMode === 'planner' || previous.chatMode === 'chat' || previous.chatMode === 'agent') ? previous.chatMode : 'agent'),
       updatedAt: Date.now()
     };
     window.localStorage.setItem(key, JSON.stringify(payload));

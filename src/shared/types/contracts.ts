@@ -204,6 +204,11 @@ export interface ChatProposalCandidate {
   summary?: string;
   targetDay?: number;
   targetStopId?: string;
+  type?: 'ATTRACTION' | 'DINING' | string;
+  isDining?: boolean;
+  specialtyDish?: string;
+  averageCost?: string;
+  costSummary?: string;
 }
 
 export interface ChatProposal {

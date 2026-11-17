@@ -153,6 +153,20 @@ export function planView() {
         </div>
       </div>
 
+      ${state.draftBackupAvailable && state.savedTripId ? `
+        <div class="panel" role="region" aria-label="未保存的行程草稿备份" style="margin-bottom:16px;padding:18px;">
+          <strong>发现这份行程的未保存修改</strong>
+          <p class="muted">当前显示云端正式行程。你可以恢复之前的本地草稿，或明确放弃它。</p>
+          <div class="section-actions">
+            <button class="primary" type="button" data-action="restore-draft-backup" data-id="${escapeHtml(state.savedTripId)}" ${state.draftRestorePending ? 'disabled aria-busy="true"' : ''}>${state.draftRestorePending ? '恢复中…' : '恢复本地草稿'}</button>
+            <button class="secondary" type="button" data-action="discard-draft-backup" data-id="${escapeHtml(state.savedTripId)}" ${state.draftRestorePending ? 'disabled' : ''}>放弃备份</button>
+          </div>
+        </div>` : ''}
+      ${state.draftBackupFailed ? `<div class="panel" role="alert" style="margin-bottom:16px;padding:18px;">
+        本地草稿备份失败；原修改仍保存在此设备。请释放浏览器存储空间后重试。
+        <button class="secondary" type="button" data-action="retry-draft-backup" data-id="${escapeHtml(state.draftBackupFailedTripId || state.savedTripId || '')}">返回原行程并重试备份</button>
+      </div>` : ''}
+
       ${state.planRequestError ? `
         <div class="spatial-plan-notice is-blocked" role="alert">
           <strong>这次没有生成新方案，当前仍是上一次的行程草稿</strong>

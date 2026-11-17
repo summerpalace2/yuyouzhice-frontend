@@ -6,6 +6,7 @@ import { handleChatAction } from './chat-action-handler.js';
 test('首次引导说明两种用途，确认后按账号记住，仍可主动查看', () => {
   const values = new Map();
   globalThis.localStorage = { getItem: key => values.get(key), setItem: (key, value) => values.set(key, value) };
+  assert.match(chatModeGuideHtml('first-use'), /智能体模式/);
   assert.match(chatModeGuideHtml('first-use'), /以对话为主导/);
   assert.match(chatModeGuideHtml('first-use'), /以局部修改为主导/);
   acknowledgeChatModeGuide('first-use');

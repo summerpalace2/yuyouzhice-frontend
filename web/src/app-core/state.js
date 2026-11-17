@@ -124,9 +124,8 @@ export const state = {
   chatSessionId: null,
   chatMessages: [],
   chatInput: '',
-  // 用户可见的对话路由：chat 只做问答，planner 负责行程调整与方案预览。
-  // 后端聊天请求统一使用 Agentic RAG（由 chat-service 映射为 deep）。
-  chatMode: 'chat',
+  // 主入口默认对齐统一智能体模式（agent）；原有 chat / planner 模式保留作对照参考。
+  chatMode: 'agent',
   chatLoading: false,
   chatDockOpen: false,
   plannerProposalDockOpen: false,
@@ -152,5 +151,17 @@ export const state = {
   degraded: false,
   degradationReasons: [],
   dynamicRefreshing: false,
-  dynamicRefreshSessionId: null
+  dynamicRefreshSessionId: null,
+  draftBackupAvailable: false,
+  draftBackup: null,
+  draftBackupFailed: false,
+  draftBackupFailedTripId: null
 };
+
+/**
+ * 规范化对话模式：保留明确指定的 agent / planner / chat，未知值回落到默认模式（默认 agent）。
+ */
+export function normalizeChatMode(mode, fallback = 'agent') {
+  if (mode === 'agent' || mode === 'planner' || mode === 'chat') return mode;
+  return fallback;
+}

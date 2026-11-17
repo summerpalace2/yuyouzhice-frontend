@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { deduplicateSuggestions, ensurePreferenceSuggestion } from './chat-service.js';
 import { handleChatAction } from './chat-action-handler.js';
+import { chatMessageHtml } from './chat-panel.js';
 import { state } from '../../app-core/state.js';
 
 test('deduplicateSuggestions strictly enforces unique actions, normalized labels, and max 3 count', () => {
@@ -67,6 +68,7 @@ test('handleChatAction execute-action-chip marks model as applied and debounces 
     sendChatMessage: async ({ inputOverride }) => {
       sendChatMessageCallCount++;
       lastPrompt = inputOverride;
+      state.chatMessages.push({ role: 'user', content: inputOverride }, { role: 'assistant', content: '调整预览已生成', pending: false });
     },
     cancelChatMessage: () => {},
     applyPlannerProposal: async () => {},
@@ -112,6 +114,64 @@ test('handleChatAction execute-action-chip marks model as applied and debounces 
   });
 
   assert.equal(sendChatMessageCallCount, 1, 'Double click must not trigger sendChatMessage again');
+});
+
+test('调整卡片重绘期间防重复提交，失败后恢复并允许重试', async () => {
+  state.user = null;
+  state.view = 'planning';
+  state.chatMode = 'planner';
+  state.trip = { version: 1, days: [] };
+  state.chatLoading = false;
+  const suggestion = { action: 'add_stop', label: '沿途加一站', payload: '加入某景点' };
+  state.chatMessages = [{ role: 'assistant', content: '建议加站', actionableSuggestions: [suggestion] }];
+  const makeButton = () => ({
+    dataset: { chipAction: suggestion.action, chipLabel: suggestion.label, chipPayload: suggestion.payload },
+    disabled: false, innerHTML: '', closest() { return this; },
+    classList: {
+      values: new Set(), add(value) { this.values.add(value); },
+      remove(value) { this.values.delete(value); }, contains(value) { return this.values.has(value); }
+    }
+  });
+  let finishFirst;
+  let calls = 0;
+  const context = {
+    action: 'execute-action-chip', state, toast() {}, renderChatInDOM() {},
+    saveUserPlan() {}, persistTripWorkspace() {}, cancelChatMessage() {},
+    sendChatMessage: async () => {
+      calls++;
+      if (calls === 1) await new Promise(resolve => { finishFirst = resolve; });
+      state.chatMessages.push({ role: 'user', content: suggestion.payload }, calls === 1
+        ? { role: 'assistant', error: '网络错误', content: '提交失败', pending: false }
+        : { role: 'assistant', content: '预览已生成', pending: false });
+    }
+  };
+  const firstButton = makeButton();
+  const first = handleChatAction({ ...context, target: firstButton });
+  assert.equal(suggestion.sending, true);
+  assert.match(chatMessageHtml(state.chatMessages[0]), /正在提交调整/);
+  assert.match(chatMessageHtml(state.chatMessages[0]), /disabled/);
+  await handleChatAction({ ...context, target: makeButton() });
+  assert.equal(calls, 1, '重绘后的同一卡片不得再次发起请求');
+  finishFirst();
+  await first;
+  assert.equal(suggestion.sending, undefined);
+  assert.equal(suggestion.applied, false);
+  assert.equal(firstButton.disabled, false);
+  assert.doesNotMatch(chatMessageHtml(state.chatMessages[0]), /已发起调整/);
+  await handleChatAction({ ...context, target: makeButton() });
+  assert.equal(calls, 2);
+  assert.equal(suggestion.applied, true);
+  assert.match(chatMessageHtml(state.chatMessages[0]), /已发起调整/);
+});
+
+test('兜底偏好卡片尊重清淡与否定语义', () => {
+  const tag = trait => ensurePreferenceSuggestion([], { trait })[0]?.payload;
+  assert.equal(JSON.parse(tag('清淡少辣')).tag, '清淡少辣');
+  assert.equal(tag('不吃辣'), undefined);
+  assert.equal(tag('不喜欢甜食'), undefined);
+  assert.equal(tag('对辣椒过敏'), undefined);
+  assert.equal(JSON.parse(tag('偏好甜品糖水')).tag, '甜品糖水');
+  assert.equal(JSON.parse(tag('饮食偏好麻辣浓郁与地道火锅')).tag, '老火锅');
 });
 
 test('handleChatAction execute-action-chip save_memory immediately saves to profile and clears candidate', async () => {

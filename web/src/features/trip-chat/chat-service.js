@@ -1,4 +1,5 @@
 import { proposalUnavailable } from './proposal-availability.js';
+import { runAgentStreamTurn } from './agent-service.js';
 import { state } from '../../app-core/state.js';
 import { deviceId, plannerIdempotencyKey, request } from '../../shared/api/client.js';
 import { renderMarkdownStreaming } from '../../shared/lib/markdown.js';
@@ -323,6 +324,19 @@ export function ensurePreferenceSuggestion(chips, detectedPreference = null) {
   // 1. 优先根据 detectedPreference 补充
   if (detectedPreference?.trait) {
     const trait = String(detectedPreference.trait);
+    // Never turn a dislike/avoidance into a positive taste preference.
+    if (/(?:过敏|忌口|禁忌|不耐受)/.test(trait)
+        || /(?:不|别|避免|拒绝|忌|不能|不太|不要).{0,4}(?:辣|火锅|甜食|甜品|甜点|糖水|甜的)/.test(trait)) {
+      return deduplicateSuggestions(list);
+    }
+    if (/(?:清淡|少辣|微辣|少油|热汤)/.test(trait)) {
+      list.push({
+        action: 'save_slot_preference', icon: '✦',
+        label: '将【清淡少辣】加入美食偏好',
+        payload: JSON.stringify({ slot: 'dining', tag: '清淡少辣' })
+      });
+      return deduplicateSuggestions(list);
+    }
     if (/火锅|辣/.test(trait)) {
       list.push({
         action: 'save_slot_preference',
@@ -338,15 +352,6 @@ export function ensurePreferenceSuggestion(chips, detectedPreference = null) {
         icon: '✦',
         label: '将【甜品糖水】加入美食偏好',
         payload: JSON.stringify({ slot: 'dining', tag: '甜品糖水' })
-      });
-      return deduplicateSuggestions(list);
-    }
-    if (/清淡|热汤|少辣/.test(trait)) {
-      list.push({
-        action: 'save_slot_preference',
-        icon: '✦',
-        label: '将【清淡少辣】加入美食偏好',
-        payload: JSON.stringify({ slot: 'dining', tag: '清淡少辣' })
       });
       return deduplicateSuggestions(list);
     }
@@ -408,6 +413,18 @@ export function ensurePreferenceSuggestion(chips, detectedPreference = null) {
 
   // 2. 根据已有的微调行动卡片语义补充
   const combinedText = list.map((c) => `${c.action} ${c.label} ${c.payload}`).join(' ');
+  if (/(?:过敏|忌口|禁忌|不耐受)/.test(combinedText)
+      || /(?:不|别|避免|拒绝|忌|不能|不太|不要).{0,4}(?:辣|火锅|甜食|甜品|甜点|糖水|甜的)/.test(combinedText)) {
+    return deduplicateSuggestions(list);
+  }
+  if (/(?:清淡|少辣|微辣)/.test(combinedText)) {
+    list.push({
+      action: 'save_slot_preference', icon: '✦',
+      label: '将【清淡少辣】加入美食偏好',
+      payload: JSON.stringify({ slot: 'dining', tag: '清淡少辣' })
+    });
+    return deduplicateSuggestions(list);
+  }
   if (/火锅|老火锅|重辣|红汤|麻辣|吃辣|辣味|川菜/.test(combinedText)) {
     list.push({
       action: 'save_slot_preference',
@@ -506,7 +523,8 @@ export async function sendChatMessage(options = {}, maybePreserveInput = false) 
     return;
   }
   if (usePlannerChannel && !state.sessionId) state.sessionId = state.savedTripId || state.trip?.id || null;
-  state.chatRoute = usePlannerChannel ? 'planner' : 'chat';
+  const useAgentChannel = !usePlannerChannel && state.chatMode === 'agent';
+  state.chatRoute = useAgentChannel ? 'agent' : (usePlannerChannel ? 'planner' : 'chat');
   console.info('[CHAT_ROUTE]', {
     channel: state.chatRoute,
     messageLength: input.length,
@@ -533,14 +551,21 @@ export async function sendChatMessage(options = {}, maybePreserveInput = false) 
   const controller = new AbortController();
   activeChatAbortController = controller;
   const generation = ++chatGeneration;
-  const requestSessionId = state.sessionId;
-  const requestTripId = state.savedTripId;
-  const requestVersion = Number(state.trip?.version || 1);
+  let requestSessionId = state.sessionId;
+  let requestTripId = state.savedTripId;
+  let requestVersion = Number(state.trip?.version || 1);
   const requestUserId = state.user?.id;
   const requestDay = Number(state.activeDay || 1), requestStopId = state.selectedStopId || null;
   const requestPinned = JSON.stringify(Array.from(state.pinnedStopIds || []).sort());
-  const owns = () => generation === chatGeneration && !controller.signal.aborted
-    && state.sessionId === requestSessionId && state.savedTripId === requestTripId && state.user?.id === requestUserId
+  const isTurnActive = () => generation === chatGeneration && state.user?.id === requestUserId;
+  const adoptTurnBaseline = ({ sessionId, savedTripId, version } = {}) => {
+    if (!isTurnActive()) return;
+    if (sessionId !== undefined) requestSessionId = sessionId;
+    if (savedTripId !== undefined) requestTripId = savedTripId;
+    if (version !== undefined && Number.isFinite(Number(version))) requestVersion = Number(version);
+  };
+  const owns = () => isTurnActive() && !controller.signal.aborted
+    && state.sessionId === requestSessionId && state.savedTripId === requestTripId
     && Number(state.trip?.version || 1) === requestVersion;
   state.chatLoading = true;
   renderChatInDOM({ scrollToBottom: true }, renderView);
@@ -549,6 +574,29 @@ export async function sendChatMessage(options = {}, maybePreserveInput = false) 
   const activeStopName = activeStop?.name || '';
 
   try {
+  if (useAgentChannel) {
+    await runAgentStreamTurn({
+      input,
+      assistant,
+      controller,
+      owns,
+      isTurnActive,
+      adoptTurnBaseline,
+      memorySessionId: getChatMemorySessionId(state.chatSessionId, state.user?.id),
+      activeStopId: activeStop?.id || '',
+      activeStopName,
+      requestDay,
+      requestVersion,
+      renderView,
+      renderChatInDOM,
+      persistChatUiState,
+      saveUserPlan,
+      scheduleTripMap,
+      toast
+    });
+    return;
+  }
+
   // 1. 详情页规划微调会话通道：全量自然语言统一路由至服务端语义处理入口，不再通过前端关键词正则拦截
   if (usePlannerChannel) {
     if (!state.sessionId) {
@@ -785,7 +833,13 @@ export async function sendChatMessage(options = {}, maybePreserveInput = false) 
           if (!owns()) return;
           if (reloaded.trip) state.trip = reloaded.trip;
           assistant.content = '行程版本已更新，请核对最新行程后重新发送调整要求。';
-        } catch { assistant.content = '行程版本已变化，但暂时未能刷新。请重新打开这份行程后继续。'; }
+        } catch {
+          // The refresh may outlive this request's workspace. An old 409 must
+          // not clear the pending intent or loading state of a newer trip/chat.
+          if (!owns()) return;
+          assistant.content = '行程版本已变化，但暂时未能刷新。请重新打开这份行程后继续。';
+        }
+        if (!owns()) return;
         assistant.pending = false; state.chatLoading = false; state.pendingIntent = null;
         if (renderView) renderView();
         persistConversationUiState();

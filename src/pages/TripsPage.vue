@@ -8,7 +8,12 @@
     </div>
 
     <div v-else-if="tripStore.savedTrips === null" class="panel trip-empty">
-      <p>正在读取您的行程……</p>
+      <template v-if="tripStore.savedTripsLoadError">
+        <h2>行程暂时无法读取</h2>
+        <p class="muted">{{ tripStore.savedTripsLoadError }}</p>
+        <button class="primary" @click="tripStore.loadTrips()">重新读取行程</button>
+      </template>
+      <p v-else>正在读取您的行程……</p>
     </div>
 
     <div v-else-if="tripStore.savedTrips.length === 0" class="panel trip-empty">
@@ -56,7 +61,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted } from 'vue';
+import { watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useTripStore } from '@/app/stores/trip';
 import { useAuthStore } from '@/app/stores/auth';
@@ -69,11 +74,13 @@ const tripStore = useTripStore();
 const authStore = useAuthStore();
 const ui = useUiStore();
 
-onMounted(() => {
-  if (authStore.user) {
-    tripStore.loadTrips();
+watch(() => authStore.user?.id ?? null, (userId) => {
+  if (userId) {
+    void tripStore.loadTrips();
+  } else {
+    tripStore.resetSavedTrips();
   }
-});
+}, { immediate: true });
 
 async function handleOpenTrip(id: string) {
   await tripStore.openSavedTrip(id);

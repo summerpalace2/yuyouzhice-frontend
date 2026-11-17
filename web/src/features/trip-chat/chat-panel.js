@@ -15,7 +15,105 @@ function sanitizeAssistantText(text) {
     .replace(/正式保存行程\s*[=：:]\s*trip-[a-zA-Z0-9_-]+/gi, '已关联正式行程');
 }
 
-export function chatMessageHtml(message) {
+const AGENT_TOOL_LABELS = Object.freeze({
+  query_weather_forecast: '实时天气',
+  search_poi_and_dining: 'POI/餐饮检索',
+  calculate_route_matrix: '路线耗时核算',
+  search_travel_knowledge: '知识库核验',
+  get_current_trip_draft: '读取当前行程',
+  preview_trip_adjustment: '沙箱预演调整',
+  confirm_apply_trip_adjustment: '行程变更确认',
+  get_user_preferences: '读取个人偏好',
+  confirm_update_user_preferences: '偏好更新确认',
+  create_trip_plan: '新建行程草案',
+  confirm_update_pinned_stops: '固定站点确认',
+  confirm_save_formal_trip: '保存正式行程确认'
+});
+
+function renderAgentTraceHtml(message) {
+  const steps = Array.isArray(message?.agentSteps) ? message.agentSteps : [];
+  const tools = Array.isArray(message?.toolResults) ? message.toolResults : [];
+  if (!steps.length && !tools.length) return '';
+  const pills = tools.map((item) => {
+    const label = AGENT_TOOL_LABELS[item.toolName] || item.toolName || '工具调用';
+    const cls = item.ok ? 'is-ok' : 'is-fail';
+    const icon = item.ok ? '✓' : '!';
+    return `<span class="agent-tool-pill ${cls}" title="${escapeHtml(item.summary || '')}"><i>${icon}</i> <b>${escapeHtml(label)}</b> ${escapeHtml(item.summary || '')}</span>`;
+  }).join('');
+  return `
+    <div class="agent-trace" aria-label="智能体执行轨迹">
+      <div class="agent-trace-head">🤖 智能体推理 ${steps.length ? `· 共 ${Math.max(1, steps[steps.length - 1]?.step || 1)} 轮` : ''}</div>
+      ${pills ? `<div class="agent-tool-pills">${pills}</div>` : ''}
+    </div>
+  `;
+}
+
+function renderAgentCitationsHtml(citations) {
+  if (!Array.isArray(citations) || citations.length === 0) return '';
+  const labels = citations.slice(0, 4).map((c) => {
+    const title = typeof c === 'string' ? c : (c?.title || c?.source || c?.docTitle || '官方知识条目');
+    return `<span class="agent-citation-chip">📚 ${escapeHtml(String(title))}</span>`;
+  }).join('');
+  return `<div class="agent-citations" aria-label="核验参考来源">${labels}</div>`;
+}
+
+function renderAgentConfirmCardHtml(confirmReq, messageIndex) {
+  if (!confirmReq || !confirmReq.confirmId) return '';
+  const isPending = confirmReq.status === 'pending';
+  const isApproved = confirmReq.status === 'approved';
+  const isCancelled = confirmReq.status === 'cancelled';
+  const isExpired = confirmReq.status === 'expired';
+  const isTripTool = confirmReq.toolName === 'confirm_apply_trip_adjustment';
+  const badgeMap = {
+    confirm_apply_trip_adjustment: '行程变更确认 (HIL)',
+    confirm_update_pinned_stops: '站点固定确认 (HIL)',
+    confirm_save_formal_trip: '正式保存确认 (HIL)',
+    confirm_update_user_preferences: '个人偏好更新确认 (HIL)'
+  };
+  const badgeText = badgeMap[confirmReq.toolName] || '敏感操作确认 (HIL)';
+  const args = confirmReq.args && typeof confirmReq.args === 'object' ? confirmReq.args : {};
+  const details = [];
+  if (args.proposalId) details.push(`提案编号：${args.proposalId}`);
+  if (args.optionId) details.push(`方案选项：${args.optionId}`);
+  if (args.baseRevision !== undefined && args.baseRevision !== null) details.push(`基准版本：v${args.baseRevision}`);
+  if (args.walkingTolerance) details.push(`步行强度：${args.walkingTolerance}`);
+  if (args.transportPreference) details.push(`交通偏好：${args.transportPreference}`);
+  if (args.stayArea) details.push(`住宿片区：${args.stayArea}`);
+
+  const statusTag = isApproved
+    ? '<span class="agent-confirm-status is-approved">✓ 已确认执行</span>'
+    : (isCancelled
+      ? '<span class="agent-confirm-status is-cancelled">✕ 已取消</span>'
+      : (isExpired ? '<span class="agent-confirm-status is-expired">⚠ 已失效/需重发</span>' : ''));
+
+  return `
+    <section class="agent-confirm-card ${isPending ? 'is-pending' : 'is-settled'}" role="region" aria-label="${escapeHtml(badgeText)}">
+      <div class="agent-confirm-head">
+        <span class="agent-confirm-badge">${escapeHtml(badgeText)}</span>
+        ${statusTag}
+      </div>
+      <p class="agent-confirm-summary">${escapeHtml(confirmReq.summary || '请确认是否执行此变更操作。')}</p>
+      ${details.length ? `<div class="agent-confirm-meta">${details.map((d) => `<span>${escapeHtml(d)}</span>`).join('')}</div>` : ''}
+      ${confirmReq.error ? `<div class="agent-confirm-error">${escapeHtml(confirmReq.error)}</div>` : ''}
+      ${isPending ? `
+        <div class="agent-confirm-actions">
+          <button type="button" class="primary mini-btn"
+                  data-action="agent-confirm-approve"
+                  data-confirm-id="${escapeHtml(confirmReq.confirmId)}"
+                  data-message-index="${messageIndex}"
+                  ${confirmReq.loading ? 'disabled' : ''}>${confirmReq.loading ? '正在执行…' : '确认执行'}</button>
+          <button type="button" class="ghost mini-btn"
+                  data-action="agent-confirm-cancel"
+                  data-confirm-id="${escapeHtml(confirmReq.confirmId)}"
+                  data-message-index="${messageIndex}"
+                  ${confirmReq.loading ? 'disabled' : ''}>暂不修改</button>
+        </div>
+      ` : ''}
+    </section>
+  `;
+}
+
+export function chatMessageHtml(message, messageIndex = -1) {
   const role = message.role === 'user' ? 'user' : 'assistant';
   const rawContent = String(message.content || '');
   const content = role === 'assistant' ? sanitizeAssistantText(rawContent) : rawContent;
@@ -80,18 +178,19 @@ export function chatMessageHtml(message) {
           // Old chips were marked applied before saving. Require a real memory receipt.
           const isApplied = Boolean(sug.applied && (!isMemory || (sug.savedMemoryId
             && (!Array.isArray(state.profile?.memories) || state.profile.memories.some(m => m.id === sug.savedMemoryId)))));
+          const isSending = Boolean(sug.sending);
           const appliedText = isSlotPref ? '已加入偏好' : (isMemory ? '已沉淀至档案' : '已发起调整');
           return `
-          <button class="chat-action-chip ${isMemory ? 'is-memory-chip' : ''} ${isApplied ? 'is-applied' : ''}"
+          <button class="chat-action-chip ${isMemory ? 'is-memory-chip' : ''} ${isApplied ? 'is-applied' : ''} ${isSending ? 'is-active-loading' : ''}"
                   type="button"
-                  ${isApplied ? 'disabled' : ''}
+                  ${isApplied || isSending ? 'disabled' : ''}
                   data-action="execute-action-chip"
                   data-chip-action="${escapeHtml(sug.action || '')}"
                   data-chip-payload="${escapeHtml(sug.payload || '')}"
                   data-chip-label="${escapeHtml(sug.label || '')}"
                   title="${escapeHtml(sug.label || '')}">
-            <span class="chat-action-chip-icon">${isApplied ? '✓' : escapeHtml(sug.icon || '✦')}</span>
-            <span class="chat-action-chip-label">${isApplied ? appliedText : escapeHtml(sug.label || '')}</span>
+            <span class="chat-action-chip-icon">${isSending ? '⏳' : isApplied ? '✓' : escapeHtml(sug.icon || '✦')}</span>
+            <span class="chat-action-chip-label">${isSending ? '正在提交调整...' : isApplied ? appliedText : escapeHtml(sug.label || '')}</span>
           </button>
         `;
         }).join('')}
@@ -99,10 +198,17 @@ export function chatMessageHtml(message) {
     </div>
   ` : '';
 
+  const agentTraceHtml = role === 'assistant' ? renderAgentTraceHtml(message) : '';
+  const agentCitationsHtml = role === 'assistant' ? renderAgentCitationsHtml(message.citations) : '';
+  const agentConfirmHtml = role === 'assistant' ? renderAgentConfirmCardHtml(message.confirmRequest, messageIndex) : '';
+
   return `
     <div class="chat-message chat-message-${role}">
       <div class="chat-message-role"><span class="chat-role-mark" aria-hidden="true">${role === 'user' ? '你' : '渝'}</span>${role === 'user' ? '你' : '悠悠助手'}</div>
+      ${agentTraceHtml}
       <div class="chat-message-content">${bodyHtml}</div>
+      ${agentConfirmHtml}
+      ${agentCitationsHtml}
       ${chipsHtml}
       ${errorHtml}
     </div>
@@ -294,11 +400,14 @@ export function chatModeBannerHtml() {
     : null;
   const isDining = selectedStop?.type === 'DINING' || selectedStop?.icon === '餐';
   const hasPlanningContext = state.view === 'planning' && Boolean(state.trip);
-  const isAdjustment = hasPlanningContext && state.chatMode === 'planner';
-  const modeLabel = isAdjustment ? '调整模式' : '聊天模式';
-  const modeDescription = isAdjustment
-    ? (isDining ? '只调整餐饮选择与风味类型，确认后才会应用' : '只调整当前行程片段，确认后才会应用')
-    : (isDining ? '专注于解答附近餐厅、招牌特色与排队建议' : (hasPlanningContext ? '只回答景点、天气和出行问题，不修改行程' : '游客模式：只回答旅行问题，不修改或保存行程'));
+  const isAgent = state.chatMode === 'agent';
+  const isAdjustment = !isAgent && hasPlanningContext && state.chatMode === 'planner';
+  const modeLabel = isAgent ? '智能体模式' : (isAdjustment ? '调整模式' : '聊天模式');
+  const modeDescription = isAgent
+    ? '自主查天气、算路程、检知识库与预演调整，所有写操作均先经你确认'
+    : (isAdjustment
+      ? (isDining ? '只调整餐饮选择与风味类型，确认后才会应用' : '只调整当前行程片段，确认后才会应用')
+      : (isDining ? '专注于解答附近餐厅、招牌特色与排队建议' : (hasPlanningContext ? '只回答景点、天气和出行问题，不修改行程' : '游客模式：只回答旅行问题，不修改或保存行程')));
   const selectedStopName = selectedStop
     ? (isDining ? `当前餐饮：${selectedStop.name}` : `当前站点：${selectedStop.name}`)
     : '';
@@ -327,7 +436,8 @@ export function selectedStopActionHtml() {
   const isDining = stop.type === 'DINING' || stop.icon === '餐';
   const selectedText = `【${stop.name}】`;
   const namesText = stop.name;
-  const isAdjustment = state.chatMode === 'planner';
+  const isAgent = state.chatMode === 'agent';
+  const isAdjustment = !isAgent && state.chatMode === 'planner';
 
   const scenicPlannerActions = [
     ['🔄 推荐同片区替换', `请推荐${selectedText}的同片区可替换景点`, 'planner'],
@@ -355,17 +465,36 @@ export function selectedStopActionHtml() {
     ['🚶 步行路线与就餐环境', `从前一站如何步行前往${selectedText}？就餐环境与周边好不好找？`, 'chat']
   ];
 
-  const actions = isDining
-    ? (isAdjustment ? diningPlannerActions : diningChatActions)
-    : (isAdjustment ? scenicPlannerActions : scenicChatActions);
+  const scenicAgentActions = [
+    ['🔄 预演同片区替换', `请结合当前草稿预演把${selectedText}换成同片区优质景点`, 'agent'],
+    ['🏛️ 查天气+室内备选', `请先查明天天气，再为${selectedText}推荐室内替代方案`, 'agent'],
+    ['🚇 算路线与耗时', `请帮我核算前往${selectedText}的步行和地铁通勤耗时`, 'agent'],
+    ['📌 固定为必去站点', `请帮我把${selectedText}固定为必去站点不要被重排`, 'agent']
+  ];
+  const diningAgentActions = [
+    ['🍲 预演同片区换餐', `请帮我预演把${selectedText}换成附近评分高的特色美食`, 'agent'],
+    ['🥗 预演不辣清淡备选', `请帮我预演把${selectedText}换成清淡不辣的餐厅并比较路程`, 'agent'],
+    ['🌶️ 查招牌与忌口提示', `请查证${selectedText}的招牌菜与口味特色`, 'agent'],
+    ['📌 固定这家餐厅', `请把${selectedText}固定在当前行程中`, 'agent']
+  ];
 
-  const title = isDining
-    ? (isAdjustment ? '🥢 已选美食 · 餐饮局部调整' : '🍲 已选美食 · 地道赏味问答')
-    : (isAdjustment ? '⚡ 已选景点 · 局部调整策略' : '💬 已选景点 · 深度文旅问答');
+  const actions = isAgent
+    ? (isDining ? diningAgentActions : scenicAgentActions)
+    : (isDining
+      ? (isAdjustment ? diningPlannerActions : diningChatActions)
+      : (isAdjustment ? scenicPlannerActions : scenicChatActions));
 
-  const tip = isDining
-    ? (isAdjustment ? '点击下方换餐策略即可生成餐饮微调预览：' : '点击下方快捷提问，获取真实口味与避坑攻略：')
-    : (isAdjustment ? '点击下方策略即可生成一对一替换预览：' : '点击下方快捷提问，获取真实游玩信息：');
+  const title = isAgent
+    ? (isDining ? '🤖 已选美食 · 智能体决策' : '🤖 已选景点 · 智能体决策')
+    : (isDining
+      ? (isAdjustment ? '🥢 已选美食 · 餐饮局部调整' : '🍲 已选美食 · 地道赏味问答')
+      : (isAdjustment ? '⚡ 已选景点 · 局部调整策略' : '💬 已选景点 · 深度文旅问答'));
+
+  const tip = isAgent
+    ? '可一键交由智能体多工具协同核查、预演并由你确认应用：'
+    : (isDining
+      ? (isAdjustment ? '点击下方换餐策略即可生成餐饮微调预览：' : '点击下方快捷提问，获取真实口味与避坑攻略：')
+      : (isAdjustment ? '点击下方策略即可生成一对一替换预览：' : '点击下方快捷提问，获取真实游玩信息：'));
 
   return `
     <section class="chat-selection-panel ${isAdjustment ? 'is-adjustment' : 'is-chat'} ${isDining ? 'is-dining-panel' : ''}" style="${isDining ? 'border-left: 4px solid #ea580c; background: #fffcf8;' : ''}" aria-live="polite">
@@ -406,28 +535,41 @@ function memoryCandidateHtml() {
   `;
 }
 
-export function chatModeTabsHtml(mode = state.chatMode) {
-  const isAdjustment = mode === 'planner';
+export function chatModeTabsHtml(mode = state.chatMode, canAdjust = true) {
+  const isAgent = mode === 'agent';
+  const isAdjustment = !isAgent && canAdjust && mode === 'planner';
+  const isChat = !isAgent && !isAdjustment;
   return `
     <div class="chat-mode-tabs" role="tablist" aria-label="对话模式切换">
       <button type="button"
-        class="chat-mode-tab-btn ${!isAdjustment ? 'is-active' : ''}"
+        class="chat-mode-tab-btn ${isAgent ? 'is-active' : ''}"
+        data-action="switch-agent-mode"
+        role="tab"
+        aria-selected="${isAgent}"
+        title="自主调用天气、高德算路、知识库及行程全周期工具，写操作须人工确认">
+        <span class="chat-mode-tab-icon">🤖</span>
+        <span>智能体</span>
+      </button>
+      <button type="button"
+        class="chat-mode-tab-btn ${isChat ? 'is-active' : ''}"
         data-action="switch-chat-mode"
         role="tab"
-        aria-selected="${!isAdjustment}"
-        title="只回答景点、天气、美食等咨询，不改动行程">
+        aria-selected="${isChat}"
+        title="旧版对照：只回答景点、天气、美食等咨询，不改动行程">
         <span class="chat-mode-tab-icon">💬</span>
         <span>聊天模式</span>
       </button>
+      ${canAdjust ? `
       <button type="button"
         class="chat-mode-tab-btn ${isAdjustment ? 'is-active' : ''}"
         data-action="switch-adjustment-mode"
         role="tab"
         aria-selected="${isAdjustment}"
-        title="结合当前行程进行局部调整、加减或替换景点">
+        title="旧版对照：结合当前行程进行局部调整、加减或替换景点">
         <span class="chat-mode-tab-icon">⚡</span>
         <span>调整模式</span>
       </button>
+      ` : ''}
     </div>
   `;
 }
@@ -435,12 +577,16 @@ export function chatModeTabsHtml(mode = state.chatMode) {
 export function chatPanel({ floating = false } = {}) {
   const hasPlanningContext = state.view === 'planning' && Boolean(state.trip);
   const canAdjust = Boolean(hasPlanningContext);
-  const chatMode = canAdjust && state.chatMode === 'planner' ? 'planner' : 'chat';
+  const chatMode = state.chatMode === 'agent'
+    ? 'agent'
+    : (canAdjust && state.chatMode === 'planner' ? 'planner' : 'chat');
   const isGuestChat = !state.user && !hasPlanningContext;
-  const inputPlaceholder = chatMode === 'planner'
-    ? (state.selectedStopId ? '输入局部调整要求，例如：换成附近的室内景点…' : '描述要怎样微调当前行程，例如：少走路、多安排室内景点…')
-    : hasPlanningContext ? '问问景点、天气、交通或美食，不会直接修改行程…' : '问问重庆景点、天气、交通或美食…';
-  const modeTabs = canAdjust ? chatModeTabsHtml(chatMode) : '';
+  const inputPlaceholder = chatMode === 'agent'
+    ? (hasPlanningContext ? '直接说复合需求，例如：查明天天气并帮我把下午室外换成室内场馆…' : '试试连续查天气、算路程或问景点门票预约政策…')
+    : (chatMode === 'planner'
+      ? (state.selectedStopId ? '输入局部调整要求，例如：换成附近的室内景点…' : '描述要怎样微调当前行程，例如：少走路、多安排室内景点…')
+      : hasPlanningContext ? '问问景点、天气、交通或美食，不会直接修改行程…' : '问问重庆景点、天气、交通或美食…');
+  const modeTabs = chatModeTabsHtml(chatMode, canAdjust);
   const compactContextHint = chatMode === 'planner'
     ? '先给出预览，确认后才会改动行程'
     : '只回答问题，不会直接改动行程';
@@ -457,7 +603,7 @@ export function chatPanel({ floating = false } = {}) {
             <span class="chat-subtitle">${hasPlanningContext ? '聊天，或对当前行程做局部调整' : '游客体验 · 只聊旅行问题'}</span>
           </div>
           <div class="chat-header-controls">
-            ${canAdjust && !floating ? modeTabs : (!canAdjust ? '<span class="guest-chat-mode-pill">游客聊天</span>' : '')}
+            ${!floating ? modeTabs : ''}
             ${floating ? '<button class="chat-dock-close" type="button" data-action="close-chat-dock" aria-label="收起 AI 助手">×</button>' : ''}
           </div>
         </div>
@@ -632,17 +778,20 @@ export function renderChatInDOM({ scrollToBottom = true } = {}, renderViewCallba
   renderPlannerProposalDockInDOM();
 
   // 3. 模式切换 Tabs 与输入框状态同步
+  const canAdjustNow = state.view === 'planning' && Boolean(state.trip);
   const topline = panel.querySelector('.chat-context-topline');
   if (topline) {
-    topline.innerHTML = chatModeTabsHtml(state.chatMode);
+    topline.innerHTML = chatModeTabsHtml(state.chatMode, canAdjustNow);
   }
   const headerTabs = panel.querySelector('.chat-header-controls .chat-mode-tabs');
   if (headerTabs) {
-    headerTabs.outerHTML = chatModeTabsHtml(state.chatMode);
+    headerTabs.outerHTML = chatModeTabsHtml(state.chatMode, canAdjustNow);
   }
   panel.querySelectorAll('.chat-mode-tab-btn').forEach((btn) => {
-    const isPlanner = btn.dataset.action === 'switch-adjustment-mode';
-    const isActive = state.chatMode === 'planner' ? isPlanner : !isPlanner;
+    const btnMode = btn.dataset.action === 'switch-adjustment-mode'
+      ? 'planner'
+      : (btn.dataset.action === 'switch-agent-mode' ? 'agent' : 'chat');
+    const isActive = state.chatMode === btnMode;
     btn.classList.toggle('is-active', isActive);
     btn.setAttribute('aria-selected', String(isActive));
   });
@@ -651,9 +800,11 @@ export function renderChatInDOM({ scrollToBottom = true } = {}, renderViewCallba
   if (inputEl) {
     inputEl.value = state.chatInput;
     inputEl.disabled = state.chatLoading;
-    inputEl.placeholder = state.chatMode === 'planner'
-      ? (state.selectedStopId ? '输入局部调整要求，例如：换成附近的室内景点…' : '描述要怎样微调当前行程，例如：少走路、多安排室内景点…')
-      : '问问景点、天气、交通或美食，不会直接修改行程…';
+    inputEl.placeholder = state.chatMode === 'agent'
+      ? (canAdjustNow ? '直接说复合需求，例如：查明天天气并帮我把下午室外换成室内场馆…' : '试试连续查天气、算路程或问景点门票预约政策…')
+      : (state.chatMode === 'planner'
+        ? (state.selectedStopId ? '输入局部调整要求，例如：换成附近的室内景点…' : '描述要怎样微调当前行程，例如：少走路、多安排室内景点…')
+        : '问问景点、天气、交通或美食，不会直接修改行程…');
     resizeChatInput(inputEl);
   }
   const modeSelect = panel.querySelector('#chat-mode');

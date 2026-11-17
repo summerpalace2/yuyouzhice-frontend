@@ -2,6 +2,7 @@ import { state } from '../app-core/state.js';
 import { escapeHtml } from '../shared/lib/security.js';
 import { request } from '../shared/api/client.js';
 import { toast } from '../shared/ui/toast.js';
+import { transitionMainView } from '../app-core/main-view-transition.js';
 
 export function detailView() {
   const detail = state.detail;
@@ -234,10 +235,10 @@ export function detailView() {
 }
 
 export async function openDetail(id, context = {}, { renderHeader, renderView } = {}) {
-  state.loading = true;
   state.detail = null;
   state.detailFromView = context.fromView || (state.view === 'detail' ? (state.detailFromView || 'explore') : state.view) || 'explore';
-  state.view = 'detail';
+  transitionMainView(state, 'detail');
+  state.loading = true;
   state.detailContext = context;
   if (renderHeader) renderHeader();
   if (renderView) renderView();
@@ -267,7 +268,7 @@ export async function updateTripWithAttraction(operation, target, { renderLoader
       })
     });
     state.trip = data.trip;
-    state.view = 'planning';
+    transitionMainView(state, 'planning');
     toast(operation === 'replace' ? '已成功替换当前站点，路线已重新优化。' : `已加入第 ${dayVal} 天行程！`);
   } catch (error) {
     toast(error.message);
