@@ -52,30 +52,27 @@ export function historyView() {
     <main class="page shell">
       <div class="section-title">
         <div>
-          <div class="eyebrow">跨设备历史同步</div>
-          <h2>历史会话</h2>
-          <p>点击任意会话即可恢复并继续调整行程。</p>
+
+          <h1>历史会话</h1>
+          <p>${state.historySessions.length} 条记录${sync.latestUpdatedAt ? ` · 最近同步于 ${escapeHtml(syncTime)}` : ''}</p>
         </div>
         <button class="secondary" data-action="refresh-history" ${state.historyLoading ? 'disabled' : ''}>${state.historyLoading ? '刷新中…' : '刷新会话'}</button>
       </div>
 
-      <div class="notice history-sync">
-        <strong>跨设备会话同步就绪</strong>
-        <span>共 ${state.historySessions.length} 条记录 · 最近同步于 ${escapeHtml(syncTime)}</span>
-      </div>
-
+      <div class="history-list">
       ${state.historySessions.map((item) => `
-        <article class="panel trip-card">
+        <article class="history-entry">
+          <div class="history-stamp"><time>${new Date(item.createdAt).toLocaleString('zh-CN')}</time><small>第 ${item.version} 版</small></div>
           <div>
-            <div class="eyebrow">${new Date(item.createdAt).toLocaleString('zh-CN')} · 第 ${item.version} 版</div>
             <h3>${escapeHtml(item.title || '重庆旅行规划')}</h3>
             <p>${escapeHtml(item.prompt || '默认需求')} ${item.replanHistory?.length ? ` · 已局部微调 ${item.replanHistory.length} 次` : ''}</p>
           </div>
           <div class="trip-actions">
-            <button class="primary" data-action="load-history" data-id="${escapeHtml(item.id)}">恢复并继续规划 →</button>
+            <button class="primary" data-action="load-history" data-id="${escapeHtml(item.id)}">继续规划</button>
           </div>
         </article>
       `).join('')}
+      </div>
     </main>
   `;
 }

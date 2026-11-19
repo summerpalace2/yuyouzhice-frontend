@@ -128,7 +128,9 @@ export function switchAdminSectionInDOM(section) {
     panel.classList.toggle('is-hidden', !active);
   });
   document.querySelectorAll('.admin-control-link[data-section]').forEach((button) => {
-    button.classList.toggle('is-active', button.dataset.section === section);
+    const active = button.dataset.section === section;
+    button.classList.toggle('is-active', active);
+    button.setAttribute('aria-pressed', String(active));
   });
   const label = document.querySelector('[data-admin-current-section]');
   if (label) label.textContent = `当前：${adminSectionLabels[section]}`;
@@ -313,16 +315,6 @@ export function adminView() {
     ? `${Math.round(Number(attractionContent.coverage) * 100)}%`
     : '—';
   const adminSection = state.adminSection || 'overview';
-  const adminSections = [
-    ['overview', '运营总览', '服务状态与核心指标', '概'],
-    ['attractions', '景点资产', '景点项目与内容覆盖', '景'],
-    ['analytics', '调用分析', '流量、主题与常用规划', '析'],
-    ['feedback', '反馈收件箱', '查看用户反馈详情', '信'],
-    ['rerank', '模型与 Rerank', '缓存命中与模型调用', '模'],
-    ['knowledge', '知识库管理', '上传、编辑与索引', '库'],
-    ['users', '账号与权限', '用户、角色与来源', '账']
-  ];
-
   const filteredDocs = allDocs.filter((doc) => {
     if (state.adminDocTopic && doc.topic !== state.adminDocTopic) return false;
     if (state.adminDocQuery) {
@@ -351,9 +343,7 @@ export function adminView() {
     <main class="page shell admin-stream-page">
       <div class="section-title">
         <div>
-          <div class="eyebrow">Admin Console · 智能管控中心</div>
-          <h2>管理控制台</h2>
-          <p>从真实服务日志、账号权限、景点资产和用户反馈中读取运营状态。</p>
+          <h1>管理控制台</h1>
         </div>
         <div class="section-actions">
           <button class="primary" data-action="enter-planner-test">进入 AI 规划测试</button>
@@ -364,26 +354,21 @@ export function adminView() {
       <div class="admin-workspace-layout">
         <aside class="admin-sidebar">
           <div class="admin-sidebar-header">
-            <span class="config-kicker">CONTROL CENTER</span>
-            <strong>智能管理控制中心</strong>
-            <span class="admin-current-section" data-admin-current-section>当前：${escapeHtml(adminSections.find(([key]) => key === adminSection)?.[1] || '运营总览')}</span>
+            <span aria-live="polite" class="admin-current-section" data-admin-current-section>当前：${escapeHtml(adminSectionLabels[adminSection] || '运营总览')}</span>
           </div>
           <nav class="admin-control-nav">
-            ${adminSections.map(([key, label, desc, icon]) => {
+            ${Object.entries(adminSectionLabels).map(([key, label]) => {
               let badgeText = '';
               if (key === 'attractions' && attractionAvailable) badgeText = `${attractions.total}`;
               else if (key === 'users') badgeText = `${users.length}`;
               else if (key === 'feedback' && feedbackTotal) badgeText = `${feedbackTotal}`;
               else if (key === 'knowledge' && corpus.documents) badgeText = `${corpus.documents}`;
               return `
-                <button class="admin-control-link ${adminSection === key ? 'is-active' : ''}" type="button" data-action="admin-section" data-section="${key}">
-                  <span>${icon}</span>
+                <button class="admin-control-link ${adminSection === key ? 'is-active' : ''}" type="button" data-action="admin-section" data-section="${key}" aria-pressed="${adminSection === key}">
                   <div class="admin-nav-info">
                     <strong>${label}</strong>
-                    <small>${desc}</small>
                   </div>
                   ${badgeText ? `<span class="admin-nav-badge">${badgeText}</span>` : ''}
-                  <b>进入 →</b>
                 </button>
               `;
             }).join('')}
@@ -397,14 +382,6 @@ export function adminView() {
         </aside>
 
         <div class="admin-content-area">
-          <div class="admin-planner-test-note">
-            <span class="admin-planner-test-icon">✦</span>
-            <div>
-              <strong>管理员也可以完整测试规划链路</strong>
-              <p>进入后使用当前管理员账号生成规划、进行局部调整并保存；数据仍按当前管理员账号隔离，不会变成游客草稿。</p>
-            </div>
-          </div>
-
           <section class="admin-stream-section admin-section-panel ${adminSection === 'overview' ? 'is-current' : 'is-hidden'}" data-admin-section="overview">
             <div class="admin-stream-head">
               <h3>系统运行概览</h3>
@@ -566,7 +543,7 @@ export function adminView() {
           <section class="admin-stream-section admin-section-panel ${adminSection === 'knowledge' ? 'is-current' : 'is-hidden'}" data-admin-section="knowledge">
             <div class="admin-stream-head">
               <div class="head-with-meta">
-                <h3>知识库语料登记 (Knowledge Registry) 与在线编辑</h3>
+                <h3>知识库语料</h3>
                 <span class="head-meta-badge">已索引 ${corpus.documents ?? '—'} 篇文档 · ${corpus.entities ?? '—'} 个实体</span>
               </div>
             </div>
@@ -644,15 +621,13 @@ export function adminView() {
           <section class="admin-stream-section admin-section-panel ${adminSection === 'users' ? 'is-current' : 'is-hidden'}" data-admin-section="users">
             <div class="admin-stream-head">
               <div class="head-with-meta">
-                <h3>用户管理 · 只读与操作授权</h3>
+                <h3>账号与权限</h3>
                 <span class="head-meta-badge" data-admin-user-count>共 ${users.length} 位注册用户</span>
               </div>
             </div>
             <div class="panel panel-pad admin-users-panel">
               <div class="admin-user-directory-intro">
                 <div>
-                  <span class="eyebrow">ACCOUNT DIRECTORY</span>
-                  <h4>账号与权限</h4>
                   <p>在当前列表中查看旅行资产、调整角色或停用账号；停用会立即从列表移除，后台继续完成处理。</p>
                 </div>
                 <div class="admin-user-overview" aria-label="账号概览">

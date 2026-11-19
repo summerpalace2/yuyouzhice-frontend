@@ -709,3 +709,32 @@ test('same-view admin subnavigation does not invalidate a pending Open', () => {
   assert.equal(state.view, 'admin');
   assert.equal(Number(state.navigationGeneration) || 0, before);
 });
+
+for (const [name, cardSession, baseRevision, expectedStatus] of [
+  ['同草稿确认卡恢复', 'opened-session', 1, 'pending'],
+  ['旧草稿确认卡失效', 'previous-session', 1, 'expired'],
+  ['旧版本确认卡失效', 'opened-session', 9, 'expired']
+]) {
+  test(`Open 从远端恢复 Agent 元数据：${name}且不恢复永久 loading`, async () => {
+    setup();
+    const source = { role: 'assistant', content: '确认修改', pending: false, confirmRequest: {
+      confirmId: 'cfg-open', toolName: 'confirm_apply_trip_adjustment', status: 'pending', loading: true,
+      plannerSessionId: cardSession, memorySessionId: 'original-memory', args: { baseRevision },
+      expiresAtMillis: Date.now() + 60000
+    } };
+    globalThis.fetch = async url => {
+      assert.match(url, /\/open$/);
+      return { ok: true, status: 200, json: async () => openResponse('opened-trip', {
+        chatEpoch: 'open-epoch', workspaceRevision: 2, chatMode: 'agent', chatMessages: [source]
+      }) };
+    };
+    await openSavedTrip('opened-trip');
+    const restored = state.chatMessages[0];
+    assert.equal(restored.confirmRequest.confirmId, 'cfg-open');
+    assert.equal(restored.confirmRequest.memorySessionId, 'original-memory');
+    assert.equal(restored.confirmRequest.status, expectedStatus);
+    assert.equal(restored.confirmRequest.loading, false);
+    assert.equal(source.confirmRequest.loading, true);
+    assert.equal(state.trip.version, 1);
+  });
+}

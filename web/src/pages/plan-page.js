@@ -116,35 +116,13 @@ export function refreshPlanningConstraintsInDOM() {
 
 export function planView() {
   if (!state.trip) {
-    const isAgentWorking = Boolean(state.chatLoading || state.agentDraftingPending || (Array.isArray(state.chatMessages) && state.chatMessages.length > 0));
     return `
-      <main class="page shell page-planning-agent">
-        <div class="workspace-agent-shell ${state.chatDockOpen ? 'has-agent-rail' : ''}">
-          <div class="panel trip-empty agent-drafting-stage">
-            <div class="agent-drafting-card">
-              <div class="empty-symbol">${isAgentWorking ? '🤖' : '行'}</div>
-              <h2>${isAgentWorking ? '全智能体正在自主编排行程…' : '用全智能体开始你的定制旅程'}</h2>
-              <p class="muted">${isAgentWorking
-                ? '正在结合实时天气、高德实景 POI 与路网耗时为您按天规划。可在右侧面板实时查看每一步工具推理。'
-                : '可直接返回首页选择偏好模板，或在右侧直接向智能体说出你的游玩天数与想去的景点。'}</p>
-              ${state.prompt ? `<div class="agent-drafting-prompt"><b>当前需求：</b>${escapeHtml(state.prompt)}</div>` : ''}
-              ${isAgentWorking ? `
-                <div class="agent-drafting-steps" aria-hidden="true">
-                  <span>① 实时天气 & 个人偏好校验</span>
-                  <span>② 高德实景 POI & 餐饮筛选</span>
-                  <span>③ 路网耗时水合 & 生成可编辑画布</span>
-                </div>
-              ` : ''}
-              <div class="agent-drafting-actions">
-                <button class="secondary" data-action="go" data-view="home">返回首页修改条件</button>
-                ${!state.chatDockOpen ? '<button class="primary" type="button" data-action="open-chat-dock">展开右侧全智能体面板</button>' : ''}
-              </div>
-            </div>
-          </div>
-          ${state.chatDockOpen ? `<div class="planning-agent-rail">${chatPanel({ floating: false })}</div>` : ''}
-        </div>
-      </main>
-    `;
+      <main class="page shell planning-draft-page">
+        <header class="draft-heading"><div><h1>和悠悠规划行程</h1>
+          ${state.prompt ? `<details><summary>本次旅行需求</summary><p>${escapeHtml(state.prompt)}</p></details>` : ''}
+        </div><button class="secondary" data-action="go" data-view="home">修改出行条件</button></header>
+        <div id="planning-assistant" class="draft-assistant">${chatPanel({ floating: false })}</div>
+      </main>`;
   }
 
   const trip = state.trip;
@@ -154,17 +132,22 @@ export function planView() {
   const currentRouteStatus = state.routeDataStatus || trip.routeDataStatus || 'ESTIMATED';
 
   return `
-    <main class="page shell page-planning-agent">
+    <main class="page shell page-planning-agent planning-workspace" data-pane="${state.planningPane}" data-expanded="${Boolean(state.planningExpanded)}" data-dock="${Boolean(state.chatDockOpen)}" data-session="${escapeHtml(state.sessionId || '')}">
+      <nav class="workspace-switch" aria-label="行程工作区">
+        <button type="button" data-pane-choice="itinerary" data-action="close-chat-dock" aria-pressed="${state.planningPane !== 'assistant'}">行程</button>
+        <button type="button" data-pane-choice="assistant" data-action="open-chat-dock" aria-pressed="${state.planningPane === 'assistant'}">助手</button>
+      </nav>
       <div class="section-title">
         <div>
-          <div class="eyebrow">${trip.planMode === 'AGENT_NATIVE' ? '🤖 全智能体自由编排 · 高德实景水化' : '专属定制方案 · 可自由微调'}</div>
-          <h2>${escapeHtml(trip.title)}</h2>
+          <div class="eyebrow">${trip.planMode === 'AGENT_NATIVE' ? '全智能体自由编排 · 专属行程' : '专属定制方案 · 可自由微调'}</div>
+          <h1>${escapeHtml(trip.title)}</h1>
           <p>
-            ${escapeHtml(sanitizePunctuation(trip.subtitle))} · 第 ${trip.version} 版
+            ${escapeHtml(sanitizePunctuation(trip.subtitle))} <span class="trip-version-label">· 第 ${trip.version} 版</span>
             ${currentRouteStatus === 'ESTIMATED' ? '<span class="planner-version-pill" style="margin-left:8px;">部分通行时间建议出发前确认</span>' : ''}
           </p>
         </div>
         <div class="section-actions">
+          <button class="secondary workspace-reopen" data-action="open-chat-dock">打开助手</button>
           <button class="secondary" data-action="refresh-dynamic" data-dynamic-refresh-button ${state.dynamicRefreshing ? 'disabled' : ''} title="仅支持高德可返回预报日期；日期必须是有效的行程日期，景点级天气仍以当地实况为准">${state.dynamicRefreshing ? '刷新实时信息中…' : '刷新天气'}</button>
           <button class="secondary" data-action="feedback-open">写封反馈</button>
           <button class="primary" data-action="save" ${state.savingTrip ? 'disabled aria-busy="true"' : ''}>${state.savingTrip ? '保存中…' : '保存行程'}</button>
@@ -192,10 +175,44 @@ export function planView() {
         </div>
       ` : ''}
 
-      <div class="workspace-agent-shell ${state.chatDockOpen ? 'has-agent-rail' : ''}">
+      <div class="workspace-agent-shell">
         <div class="workspace-grid">
-          <div class="workspace-left-rail">
-            <div id="constraint-slot-mount">${slots(trip.constraints, state.constraintEditing)}</div>
+          <details class="planning-conditions" ${state.constraintEditing ? 'open' : ''}><summary>本次旅行条件 <span>查看或修改已识别的要求</span></summary><div id="constraint-slot-mount">${slots(trip.constraints, state.constraintEditing)}</div></details>
+          <section class="panel">
+            <div class="plan-header">
+              <div>
+                <h2>每日行程</h2>
+                <p>${totalDays > 0 ? `共 ${totalDays} 天行程 · ${trip.planMode === 'AGENT_NATIVE' ? '全智能体实景编排' : '已自动去重与路线优化'}` : '当前未生成可执行行程；请先完成地点或路线核验。'}</p>
+              </div>
+              <div style="display:flex;gap:6px;align-items:center;">
+                ${totalDays === 0 ? '<span class="planner-version-pill">等待地点 / 路线确认</span>' : `<span class="status-pill">${currentRouteStatus === 'ESTIMATED' ? '出行前确认路线' : '路线信息已更新'}</span>`}
+                <a class="route-map-link" href="#itinerary-map">查看地图 ↓</a>
+              </div>
+            </div>
+
+            ${trip.spatialPlan?.verified === false ? spatialRecoveryPanel(trip) : trip.spatialPlan?.fillStatus === 'UNDERFILLED' ? `
+              <div class="spatial-plan-notice is-partial" role="status">
+                <strong>附近行程未排满</strong>
+                <span>${escapeHtml(trip.summary || '附近可核验候选不足；可扩大范围、调整交通方式，或保留自由时间。')}</span>
+              </div>
+            ` : ''}
+            ${totalDays > 0 ? '<details class="forecast-note"><summary>天气预报说明</summary><p>有明确日期时匹配对应的重庆市级高德预报；未指定日期时展示今日天气参考（不代表实际出行日），超出接口预报范围或接口暂未返回时会显示“待确认”，可在确定日期后再次刷新。</p></details>' : ''}
+
+            ${tripDays.map((day) => `
+              <div class="day-block" data-trip-day="${day.day}">
+                <div class="day-head">
+                  <div class="day-head-title-group">
+                    <strong>${escapeHtml(day.dateLabel || `第 ${day.day} 天`)}</strong>
+                    <span data-weather-day="${day.day}">${weatherBadge(day)}</span>
+                  </div>
+                </div>
+                ${day.agentNotes ? `<div class="day-agent-note">🤖 <b>日程提示：</b>${escapeHtml(day.agentNotes)}</div>` : ''}
+                ${day.departureContext ? `<div class="day-context"><span class="context-icon" style="font-size:14px;flex-shrink:0;">🚩</span><span><strong>出发点参考：</strong>${escapeHtml(day.departureContext)}</span></div>` : ''}
+                ${day.stops.map((stop, idx) => stopCard(stop, day.day, idx + 1)).join('')}
+              </div>
+            `).join('')}
+          </section>
+          <div class="workspace-left-rail" id="itinerary-map">
             <aside class="panel evidence-card">
               <div class="map-card-head">
                 <div class="panel-title" style="margin-bottom:0;">高德全景路线图</div>
@@ -224,58 +241,15 @@ export function planView() {
 
               <div class="map-intel-card">
                 <div class="intel-header">
-                  <span class="intel-badge">高德路网核验就绪</span>
-                  <span class="intel-poi-count">已定位 ${mapStops.length} 处机位</span>
+                  <span class="intel-poi-count">已定位 ${mapStops.length} 个站点</span>
                 </div>
                 ${userLocationRowHtml()}
-                <div class="intel-row">
-                  <strong>出行建议</strong>
-                  <p>重庆依山而建，轻轨与户外自动扶梯是长辈出行的极佳选择，沿线商圈多为平街直连。</p>
-                </div>
-                <div class="intel-row">
-                  <strong>路线依据</strong>
-                  <p>路线会结合地图信息与当天实际出行情况安排，出发前可再次确认通行时间。</p>
-                </div>
               </div>
             </aside>
           </div>
 
-          <section class="panel">
-            <div class="plan-header">
-              <div>
-                <h2>行程安排详情</h2>
-                <p>${totalDays > 0 ? `共 ${totalDays} 天行程 · ${trip.planMode === 'AGENT_NATIVE' ? '全智能体实景编排' : '已自动去重与路线优化'}` : '当前未生成可执行行程；请先完成地点或路线核验。'}</p>
-              </div>
-              <div style="display:flex;gap:6px;align-items:center;">
-                ${totalDays === 0 ? '<span class="planner-version-pill">等待地点 / 路线确认</span>' : `<span class="status-pill">${currentRouteStatus === 'ESTIMATED' ? '出行前确认路线' : '路线信息已更新'}</span>`}
-                ${totalDays > 0 && currentRouteStatus === 'ESTIMATED' ? '<span class="planner-version-pill">路线待确认</span>' : ''}
-              </div>
-            </div>
-
-            ${trip.spatialPlan?.verified === false ? spatialRecoveryPanel(trip) : trip.spatialPlan?.fillStatus === 'UNDERFILLED' ? `
-              <div class="spatial-plan-notice is-partial" role="status">
-                <strong>附近行程未排满</strong>
-                <span>${escapeHtml(trip.summary || '附近可核验候选不足；可扩大范围、调整交通方式，或保留自由时间。')}</span>
-              </div>
-            ` : ''}
-            ${totalDays > 0 ? '<div class="weather-query-note"><strong>天气说明</strong><span>有明确日期时匹配对应的重庆市级高德预报；未指定日期时展示今日天气参考（不代表实际出行日），超出接口预报范围或接口暂未返回时会显示“待确认”，可在确定日期后再次刷新。</span></div>' : ''}
-
-            ${tripDays.map((day) => `
-              <div class="day-block" data-trip-day="${day.day}">
-                <div class="day-head">
-                  <div class="day-head-title-group">
-                    <strong>${escapeHtml(day.dateLabel)}</strong>
-                    <span data-weather-day="${day.day}">${weatherBadge(day)}</span>
-                  </div>
-                </div>
-                ${day.agentNotes ? `<div class="day-agent-note">🤖 <b>日程提示：</b>${escapeHtml(day.agentNotes)}</div>` : ''}
-                ${day.departureContext ? `<div class="day-context"><span class="context-icon" style="font-size:14px;flex-shrink:0;">🚩</span><span><strong>出发点参考：</strong>${escapeHtml(day.departureContext)}</span></div>` : ''}
-                ${day.stops.map((stop, idx) => stopCard(stop, day.day, idx + 1)).join('')}
-              </div>
-            `).join('')}
-          </section>
         </div>
-        ${state.chatDockOpen ? `<div class="planning-agent-rail">${chatPanel({ floating: false })}</div>` : ''}
+        <div class="planning-agent-rail" id="planning-assistant" tabindex="-1">${chatPanel({ floating: false })}</div>
       </div>
     </main>
   `;

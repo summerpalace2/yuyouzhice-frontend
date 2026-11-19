@@ -26,14 +26,14 @@ test('profileView renders AI Prepend Planning Prompt editor and 7-day memory str
   const html = profileView();
 
   // 1. 左侧包含 AI 规划前置提示词面板及编辑器
-  assert.ok(html.includes('AI 规划前置提示词'), 'Should include AI planning prepend prompt title');
+  assert.ok(html.includes('我的旅行偏好摘要'), 'Should include AI planning prepend prompt title');
   assert.ok(html.includes('id="prepend-prompt-editor"'), 'Should include textarea editor');
   assert.ok(html.includes('偏好地道老火锅与老茶馆'), 'Should render current prompt content');
   assert.ok(html.includes('data-action="save-prepend-prompt"'), 'Should have save button');
   assert.ok(html.includes('data-action="resynthesize-prepend-prompt"'), 'Should have resynthesize button');
 
   // 2. 右侧为 7 天滚动流，彻底废除 12 小时限制文案
-  assert.ok(html.includes('7天滚动流'), 'Should mention 7-day rolling stream');
+  assert.ok(html.includes('最近 7 天'), 'Should mention 7-day rolling stream');
   assert.ok(!html.includes('同一账号至少间隔 12 小时'), 'Should NOT have the obsolete 12-hour limitation text');
 
   // 3. 折叠按类别而非来源计数；同一饮食类别的两条来源一起显示。
@@ -105,7 +105,7 @@ test('handleProfileAction toggle-expand-memories toggles memoriesExpanded state'
   assert.equal(refreshed, true);
 });
 
-test('homeView renders Prepend Planning Prompt with 2-line clamp and ellipsis style', async () => {
+test('homeView exposes the complete preference summary and an accessible opt-out switch', async () => {
   const { homeView } = await import('../../pages/home-page.js');
   state.useMemoriesInPlan = true;
   state.profile = {
@@ -116,14 +116,17 @@ test('homeView renders Prepend Planning Prompt with 2-line clamp and ellipsis st
 
   // 1. 横幅标题与徽标
   assert.ok(html.includes('专属旅行偏好已就绪'), 'Should contain banner title');
-  assert.ok(html.includes('AI 前置提示词'), 'Should contain AI prepend prompt badge');
+  assert.ok(html.includes('本次参考'), 'Should indicate preferences are used for this trip');
 
   // 2. 核心内容为前置提示词展示框
   assert.ok(html.includes('class="memory-dock-prompt-box'), 'Should contain prompt box instead of chip cloud');
-  assert.ok(html.includes('AI 规划前置提示词：'), 'Should contain label');
+  assert.ok(html.includes('偏好摘要：'), 'Should contain label');
   assert.ok(html.includes('老茶馆、地道重庆火锅'), 'Should render the prompt text');
 
-  // 3. 样式包含 2 行省略号限制 (-webkit-line-clamp: 2)
-  assert.ok(html.includes('-webkit-line-clamp: 2'), 'Should enforce 2-line clamping in CSS');
-  assert.ok(html.includes('text-overflow: ellipsis'), 'Should have text-overflow ellipsis');
+  // The redesigned banner shows full content and preserves the user's opt-out.
+  assert.ok(html.includes(state.profile.profilePrependPrompt));
+  assert.match(html, /role="switch" aria-checked="true"/);
+  state.useMemoriesInPlan = false;
+  assert.match(homeView(), /role="switch" aria-checked="false"/);
+  state.useMemoriesInPlan = true;
 });

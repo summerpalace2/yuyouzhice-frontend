@@ -43,22 +43,22 @@ export function tripsView() {
     <main class="page shell">
       <div class="section-title">
         <div>
-          <div class="eyebrow">您的专属旅行资产库</div>
-          <h2>我的行程</h2>
-          <p>已保存 ${state.savedTrips.length} 份精彩重庆行程方案。</p>
+
+          <h1>我的行程</h1>
+          <p>已保存 ${state.savedTrips.length} 份行程</p>
         </div>
         <button class="secondary" data-action="refresh-trips" ${state.tripsLoading ? 'disabled' : ''}>${state.tripsLoading ? '刷新中…' : '刷新行程'}</button>
       </div>
-      <div data-saved-trip-list>
+      <div class="saved-trip-grid" data-saved-trip-list>
       ${state.savedTrips.map((item) => `
         <article class="panel trip-card" data-saved-trip-id="${escapeHtml(item.id)}">
           <div>
-            <div class="eyebrow">保存时间：${new Date(item.savedAt).toLocaleString('zh-CN')}</div>
+            <div class="trip-saved-time">保存于 ${new Date(item.savedAt).toLocaleString('zh-CN')}</div>
             <h3>${escapeHtml(item.trip.title)}</h3>
-            <p>${escapeHtml(item.trip.subtitle)} · 第 ${item.trip.version} 版 · 共 ${item.trip.days?.length || 2} 天</p>
+            <p>${escapeHtml(item.trip.subtitle)} · 第 ${item.trip.version} 版 · ${item.trip.days?.length ? `共 ${item.trip.days.length} 天` : '天数待定'}</p>
           </div>
           <div class="trip-actions">
-            <button class="secondary" data-action="load-saved" data-id="${escapeHtml(item.id)}" ${state.openingTripId === String(item.id) ? 'disabled' : ''}>${state.openingTripId === String(item.id) ? '打开中…' : '打开行程'}</button>
+            <button class="primary" data-action="load-saved" data-id="${escapeHtml(item.id)}" ${state.openingTripId === String(item.id) ? 'disabled' : ''}>${state.openingTripId === String(item.id) ? '打开中…' : '打开行程'}</button>
             <button class="secondary" data-action="export-pdf" data-id="${escapeHtml(item.id)}">导出 PDF</button>
             <button class="danger" data-action="delete-saved" data-id="${escapeHtml(item.id)}">删除</button>
           </div>

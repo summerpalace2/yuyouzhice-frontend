@@ -5,6 +5,9 @@ let workspaceGeneration = 0;
 
 export function invalidateWorkspace() {
   workspaceGeneration++;
+  state.planningPane = 'itinerary';
+  state.planningExpanded = false;
+  state.itineraryScroll = 0;
   state.openingTripId = null;
   state.savingTrip = false;
   state.chatWorkspace = null;

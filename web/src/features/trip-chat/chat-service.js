@@ -1,5 +1,6 @@
 import { proposalUnavailable } from './proposal-availability.js';
 import { runAgentStreamTurn } from './agent-service.js';
+import { newAgentOperationId, canRetryAgentOperation, rememberAgentWorkspace } from './agent-operation.js';
 import { state } from '../../app-core/state.js';
 import { deviceId, plannerIdempotencyKey, request } from '../../shared/api/client.js';
 import { renderMarkdownStreaming } from '../../shared/lib/markdown.js';
@@ -524,6 +525,11 @@ export async function sendChatMessage(options = {}, maybePreserveInput = false) 
   }
   if (usePlannerChannel && !state.sessionId) state.sessionId = state.savedTripId || state.trip?.id || null;
   const useAgentChannel = !usePlannerChannel && state.chatMode === 'agent';
+  const retryOperation = opts?.retryOperation;
+  if (retryOperation && (!useAgentChannel || !canRetryAgentOperation(retryOperation, state, input))) {
+    toast('原请求所属行程或版本已变化，请基于当前行程重新发送。');
+    return;
+  }
   state.chatRoute = useAgentChannel ? 'agent' : (usePlannerChannel ? 'planner' : 'chat');
   console.info('[CHAT_ROUTE]', {
     channel: state.chatRoute,
@@ -537,6 +543,11 @@ export async function sendChatMessage(options = {}, maybePreserveInput = false) 
   state.chatSessionId = tripChatKey;
   state.chatMessages.push({ role: 'user', content: input });
   const assistant = { role: 'assistant', content: '', rawContent: '', pending: true, retryMessage: input };
+  if (useAgentChannel) {
+    assistant.agentOperation = retryOperation
+      ? structuredClone(retryOperation) : { operationId: newAgentOperationId(), payload: null };
+    rememberAgentWorkspace(assistant.agentOperation, state);
+  }
   state.chatMessages.push(assistant);
   if (!hasInputOverride || !preserveInput) {
     state.chatInput = '';
@@ -557,9 +568,13 @@ export async function sendChatMessage(options = {}, maybePreserveInput = false) 
   const requestUserId = state.user?.id;
   const requestDay = Number(state.activeDay || 1), requestStopId = state.selectedStopId || null;
   const requestPinned = JSON.stringify(Array.from(state.pinnedStopIds || []).sort());
-  const isTurnActive = () => generation === chatGeneration && state.user?.id === requestUserId;
+  const requestMessages = state.chatMessages;
+  const workspaceOwner = captureWorkspace();
+  const generationActive = () => generation === chatGeneration && state.user?.id === requestUserId
+    && workspaceOwner.owns() && state.chatMessages === requestMessages;
+  const isTurnActive = () => generationActive() && state.sessionId === requestSessionId && state.savedTripId === requestTripId;
   const adoptTurnBaseline = ({ sessionId, savedTripId, version } = {}) => {
-    if (!isTurnActive()) return;
+    if (!generationActive()) return;
     if (sessionId !== undefined) requestSessionId = sessionId;
     if (savedTripId !== undefined) requestTripId = savedTripId;
     if (version !== undefined && Number.isFinite(Number(version))) requestVersion = Number(version);
@@ -999,7 +1014,7 @@ export async function sendChatMessage(options = {}, maybePreserveInput = false) 
   }
   } finally {
     assistant.pending = false;
-    if (generation === chatGeneration && state.sessionId === requestSessionId) {
+    if (isTurnActive()) {
       state.chatLoading = false;
       if (activeChatAbortController === controller) activeChatAbortController = null;
     }
@@ -1085,7 +1100,7 @@ async function doApplyPlannerProposal({ renderView, scheduleTripMap, renderChatI
           button.classList.remove('active-btn');
           button.dataset.action = 'select-stop';
           const isDining = element.classList.contains('dining-stop-card');
-          button.textContent = isDining ? '选中此餐' : '选中此站';
+          button.textContent = isDining ? '让悠悠调整此餐' : '让悠悠调整';
         }
         element.querySelector('.chip-selected')?.remove();
       });

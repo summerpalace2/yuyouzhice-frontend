@@ -88,23 +88,37 @@ function isObsoleteGuestAuthError(message) {
   return /聊天功能需要登录，请先登录后再试|需要登录后才能继续聊天/.test(text);
 }
 
+/** 恢复聊天记录时移除瞬时状态；新打开的草稿不能执行旧草稿确认单。 */
+export function normalizeChatMessages(messages, { plannerSessionId, version, now = Date.now() } = {}) {
+  if (!Array.isArray(messages)) return [];
+  return messages.filter(message => !isObsoleteGuestAuthError(message)).map(message => {
+    if (!message || typeof message !== 'object') return message;
+    const card = message.confirmRequest;
+    const invalidCard = card?.status === 'pending' && (
+      (card.expiresAtMillis > 0 && card.expiresAtMillis <= now)
+      || (plannerSessionId !== undefined && card.plannerSessionId !== plannerSessionId)
+      || (version !== undefined && card.toolName === 'confirm_apply_trip_adjustment'
+        && card.args?.baseRevision != null && Number(card.args.baseRevision) !== Number(version))
+    );
+    if (!message.pending && !card?.loading && !invalidCard) return message;
+    return {
+      ...message, pending: false,
+      content: message.content || (message.pending ? '本次回复未完成，请重新提问。' : ''),
+      ...(message.pending && message.agentOperation?.payload && !card ? {
+        error: message.error || '上次请求未收到完整回执，可用原动作重新发送。', failureKind: 'temporary'
+      } : {}),
+      ...(card ? { confirmRequest: { ...card, loading: false,
+        status: invalidCard ? 'expired' : card.status,
+        error: invalidCard ? '确认方案已过期或所属草稿已变化，请重新生成预览。'
+          : card.loading ? '上次确认结果尚未核对，可再次提交读取处理结果。' : card.error
+      } } : {})
+    };
+  });
+}
+
 function normalizeChatHistories(chatsData) {
   if (!chatsData || typeof chatsData !== 'object' || Array.isArray(chatsData)) return {};
-  return Object.fromEntries(Object.entries(chatsData).map(([chatKey, messages]) => [
-    chatKey,
-    Array.isArray(messages)
-      // 旧版本的匿名鉴权错误永远不代表真实旅行对话，且修复后不会再出现。
-      // 对所有旧键清理，避免它在 default -> guest-chat 迁移时被一并带入。
-      ? messages.filter((message) => !isObsoleteGuestAuthError(message)).map((message) => {
-        if (!message || typeof message !== 'object' || !message.pending) return message;
-        return {
-          ...message,
-          pending: false,
-          content: message.content || '本次回复未完成，请重新提问。'
-        };
-      })
-      : []
-  ]));
+  return Object.fromEntries(Object.entries(chatsData).map(([key, messages]) => [key, normalizeChatMessages(messages)]));
 }
 
 export function getTripChatKey(savedTripId, sessionId) {

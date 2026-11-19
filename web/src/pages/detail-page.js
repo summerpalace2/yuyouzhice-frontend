@@ -36,8 +36,7 @@ export function detailView() {
 
         <div class="detail-layout detail-skeleton">
           <div class="detail-hero detail-skeleton-hero shimmer">
-            <div class="vertical">山城渝景</div>
-          </div>
+             </div>
           <section class="detail-copy">
             <div class="skeleton-line shimmer" style="width: 25%; height: 16px; margin-bottom: 12px; border-radius: 4px;"></div>
             <div class="skeleton-line shimmer" style="width: 60%; height: 32px; margin-bottom: 16px; border-radius: 6px;"></div>
@@ -64,11 +63,9 @@ export function detailView() {
     : [];
   const imageHero = imageSrc
     ? `<div class="detail-hero" style="background-image:url('${escapeHtml(imageSrc)}')">
-         <div class="vertical">山城渝景</div>
          <span class="image-credit">${escapeHtml(detail.imageSource || '高德 Web Service API')} · ${escapeHtml(detail.district)}</span>
        </div>`
     : `<div class="detail-hero detail-hero-unavailable">
-         <div class="vertical">山城渝景</div>
          <div class="image-unavailable">高德图片未返回</div>
          <span class="image-credit">${escapeHtml(detail.imageStatus || '未返回')} · ${escapeHtml(detail.imageReason || '本次没有可用景区图片。')}</span>
        </div>`;
@@ -106,28 +103,23 @@ export function detailView() {
   }
 
   const aiGuideCard = sections.length ? `
-    <div class="detail-ai-guide-card" style="margin: 22px 0; padding: 22px; border-radius: 18px; background: linear-gradient(135deg, #ffffff 0%, #fffbf5 100%); border: 1.5px solid rgba(217, 119, 6, 0.28); box-shadow: 0 8px 30px rgba(180, 83, 9, 0.08), 0 2px 6px rgba(0,0,0,0.03);">
-      <div class="ai-guide-header" style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin-bottom: 16px; padding-bottom: 14px; border-bottom: 1px solid rgba(217, 119, 6, 0.16);">
-        <div class="ai-guide-title-wrap" style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
-          <span class="ai-guide-badge" style="display: inline-flex; align-items: center; gap: 6px; padding: 5px 14px; border-radius: 999px; background: linear-gradient(135deg, #c8523d 0%, #ea580c 100%); color: #fff; font-size: 13.5px; font-weight: 800; box-shadow: 0 2px 10px rgba(200, 82, 61, 0.3);">🤖 渝悠悠 AI 智囊导览</span>
-          <span class="ai-guide-tag" style="padding: 4px 10px; border-radius: 999px; background: #fef3c7; color: #92400e; border: 1px solid #fde68a; font-size: 11.5px; font-weight: 700;">${isRuntime ? '高德实时文旅解析' : '深度地标解析'}</span>
+    <div class="detail-ai-guide-card">
+      <div class="ai-guide-header">
+        <div class="ai-guide-title-wrap">
+          <span class="ai-guide-badge">🤖 渝悠悠 AI 智囊导览</span>
+          <span class="ai-guide-tag">${isRuntime ? '高德实时文旅解析' : '深度地标解析'}</span>
         </div>
-        <span class="ai-guide-verified" style="display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; border-radius: 999px; background: #ecfdf5; color: #047857; border: 1px solid #a7f3d0; font-size: 11.5px; font-weight: 700;">✓ 已核验权威语料</span>
       </div>
-      <div class="ai-guide-body" style="display: flex; flex-direction: column; gap: 12px;">
+      <div class="ai-guide-body">
         ${sections.map((sec) => `
-          <div class="ai-guide-section ai-guide-subcard" style="padding: 14px 18px; background: #ffffff; border-radius: 12px; border: 1px solid rgba(217, 119, 6, 0.16); border-left: 4px solid #ea580c; box-shadow: 0 2px 8px rgba(0,0,0,0.03);">
-            <div class="ai-guide-section-title" style="display: flex; align-items: center; gap: 7px; margin-bottom: 6px; color: #9a3412; font-size: 14px; font-weight: 800;">
-              <span class="ai-guide-section-icon" aria-hidden="true" style="font-size: 15px;">${getSectionIcon(sec.title)}</span>
+          <div class="ai-guide-section ai-guide-subcard">
+            <div class="ai-guide-section-title">
+              <span class="ai-guide-section-icon" aria-hidden="true">${getSectionIcon(sec.title)}</span>
               <strong>${escapeHtml(sec.title)}</strong>
             </div>
-            <p class="ai-guide-section-content" style="margin: 0; font-size: 13.5px; line-height: 1.7; color: #374151;">${escapeHtml(sec.content)}</p>
+            <p class="ai-guide-section-content">${escapeHtml(sec.content)}</p>
           </div>
         `).join('')}
-      </div>
-      <div class="ai-guide-footer" style="margin-top: 14px; padding-top: 10px; border-top: 1px dashed rgba(217, 119, 6, 0.15); display: flex; align-items: center; justify-content: space-between; color: var(--muted); font-size: 11.5px;">
-        <span>🔍 数据核验依据：高德实时位置地图服务与重庆智慧文旅智囊知识库</span>
-        <span style="color: var(--green); font-weight: 600;">权威收录 · 随行参考</span>
       </div>
     </div>
   ` : '';
@@ -145,7 +137,6 @@ export function detailView() {
         ${imageHero}
 
         <section class="detail-copy">
-          <div class="eyebrow">${isRuntime ? '高德实时探索点' : 'Attraction Guide'} · ${escapeHtml(detail.district)}</div>
           <h1>${escapeHtml(detail.name)}</h1>
           ${detail.address ? `
             <div class="detail-address-info" style="margin: 4px 0 10px; font-size: 13px; color: var(--muted);">
@@ -159,16 +150,37 @@ export function detailView() {
             ${(detail.tags || []).map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`).join('')}
           </div>
 
-          ${aiGuideCard}
+          <div class="detail-actions-bar">
+            <button class="secondary mini-btn" data-action="navigate-to" data-name="${escapeHtml(detail.name)}" data-location="${escapeHtml(detail.location || '')}">高德导航 · 到这去</button>
+          </div>
+
+          ${canAdd ? `
+            <div class="add-to-trip-panel">
+              <div class="add-select-row">
+                <label for="detail-day-select">加入到</label>
+                <select id="detail-day-select">
+                  ${Array.from({ length: totalDays }, (_, i) => `
+                    <option value="${i + 1}" ${context.day === i + 1 ? 'selected' : ''}>第 ${i + 1} 天行程</option>
+                  `).join('')}
+                </select>
+              </div>
+              <div class="modal-actions detail-actions">
+                <button class="primary" data-action="add-attraction-custom" data-id="${escapeHtml(detail.id || detail.attractionId)}">加入选定天数</button>
+                ${context.stopId ? `
+                  <button class="secondary" data-action="replace-attraction" data-id="${escapeHtml(detail.id || detail.attractionId)}" data-day="${context.day || 1}" data-stop-id="${escapeHtml(context.stopId)}">替换当前站点</button>
+                ` : ''}
+              </div>
+            </div>
+          ` : ''}
 
           <div class="detail-facts">
             <div class="detail-fact">
               <strong>建议时长</strong>
-              <div><b>${escapeHtml(detail.duration || '约 90 分钟')}</b><small>游玩深度推荐</small></div>
+              <div><b>${escapeHtml(detail.duration || '待确认')}</b><small>游玩深度推荐</small></div>
             </div>
             <div class="detail-fact">
               <strong>门票建议</strong>
-              <div><b>${escapeHtml(detail.ticket || '免费开放')}</b><small>以现场及官方公告为准</small></div>
+              <div><b>${escapeHtml(detail.ticket || '待确认')}</b><small>以现场及官方公告为准</small></div>
             </div>
             <div class="detail-fact">
               <strong>${detail.openingHours ? '开放时间' : '推荐时段'}</strong>
@@ -176,7 +188,7 @@ export function detailView() {
             </div>
             <div class="detail-fact">
               <strong>交通到达</strong>
-              <div><b>${escapeHtml(detail.walk || '轻轨/公交直达')}</b><small>高德路线核验</small></div>
+              <div><b>${escapeHtml(detail.walk || '待确认')}</b></div>
             </div>
             <div class="detail-fact">
               <strong>适合人群</strong>
@@ -206,28 +218,7 @@ export function detailView() {
             </section>
           ` : ''}
 
-          <div class="detail-actions-bar" style="margin-top:12px;margin-bottom:12px;">
-            <button class="secondary mini-btn" data-action="navigate-to" data-name="${escapeHtml(detail.name)}" data-location="${escapeHtml(detail.location || '')}">高德导航 · 到这去</button>
-          </div>
-
-          ${canAdd ? `
-            <div class="add-to-trip-panel">
-              <div class="add-select-row">
-                <label>选择加入到：</label>
-                <select id="detail-day-select">
-                  ${Array.from({ length: totalDays }, (_, i) => `
-                    <option value="${i + 1}" ${context.day === i + 1 ? 'selected' : ''}>第 ${i + 1} 天行程</option>
-                  `).join('')}
-                </select>
-              </div>
-              <div class="modal-actions detail-actions">
-                <button class="primary" data-action="add-attraction-custom" data-id="${escapeHtml(detail.id || detail.attractionId)}">加入选定天数</button>
-                ${context.stopId ? `
-                  <button class="secondary" data-action="replace-attraction" data-id="${escapeHtml(detail.id || detail.attractionId)}" data-day="${context.day || 1}" data-stop-id="${escapeHtml(context.stopId)}">替换当前站点</button>
-                ` : ''}
-              </div>
-            </div>
-          ` : ''}
+          ${aiGuideCard}
         </section>
       </div>
     </main>

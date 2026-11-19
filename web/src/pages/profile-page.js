@@ -29,10 +29,10 @@ const PRESET_ATTRACTION_TAGS = ['山城夜景', '室内场馆', '魔幻8D', '人
 function profileStatsHtml({ trips, memories, history, memoryEnabled = false }) {
   return `
     <div class="profile-stats-grid">
-      <div class="profile-stat-card"><div class="stat-name">已存方案</div><div class="stat-val">${trips.length}</div><div class="stat-sub">份持久化行程</div></div>
-      <div class="profile-stat-card"><div class="stat-name">前置提示词</div><div class="stat-val" data-profile-prompt-status>${memoryEnabled ? '已启用' : '未开启'}</div><div class="stat-sub">注入AI规划与对话</div></div>
+      <div class="profile-stat-card"><div class="stat-name">已存方案</div><div class="stat-val">${trips.length}</div><div class="stat-sub">份已保存行程</div></div>
+      <div class="profile-stat-card"><div class="stat-name">偏好参考</div><div class="stat-val" data-profile-prompt-status>${memoryEnabled ? '已启用' : '未开启'}</div><div class="stat-sub">用于规划与聊天</div></div>
       <div class="profile-stat-card"><div class="stat-name">近期记忆</div><div class="stat-val" data-profile-memory-count>${groupTravelMemories(memories).length}</div><div class="stat-sub">类偏好 · ${memories.length} 条近期来源</div></div>
-      <div class="profile-stat-card"><div class="stat-name">变更记录</div><div class="stat-val">${history.length}</div><div class="stat-sub">次偏好调整流水</div></div>
+      <div class="profile-stat-card"><div class="stat-name">变更记录</div><div class="stat-val">${history.length}</div><div class="stat-sub">次偏好调整</div></div>
     </div>
   `;
 }
@@ -50,34 +50,33 @@ function prependPromptPanelHtml() {
     <section class="panel panel-pad prepend-prompt-panel">
       <div class="prepend-prompt-head">
         <div>
-          <span class="memory-kicker">AI PREPEND PLANNING PROMPT</span>
-          <div class="panel-title">AI 规划前置提示词</div>
+          <div class="panel-title">我的旅行偏好摘要</div>
         </div>
         <span class="prepend-prompt-status-badge ${memoryEnabled ? 'is-active' : ''}">
-          ${memoryEnabled ? '● 规划注入已启用' : '○ 规划注入已暂停'}
+          ${memoryEnabled ? '● 已启用偏好参考' : '○ 已暂停偏好参考'}
         </span>
       </div>
       <p class="muted" style="font-size:13px;margin:6px 0 14px;line-height:1.55;">
-        由右侧近期旅行记忆智能萃取整合。开启后，该画像<b>直接作为后续 AI 行程规划与对话引擎的高优系统前置提示词（Prepend Context）</b>。支持自由修改；右侧新增记忆时会自动增量微调同步，并持久保留你的专属定制内容。
+        这里整理了你已确认的旅行习惯。开启后，悠悠会在规划和聊天时参考；有新要求时，仍以本次输入为准。你也可以单独补充备注。
       </p>
 
       <div class="prepend-prompt-editor-card">
         <div class="prepend-prompt-editor-top">
           <div class="editor-label-row">
             <span class="editor-icon">✨</span>
-            <strong>旅行偏好画像（AI 规划直接输入）</strong>
+            <strong>当前偏好摘要</strong>
           </div>
           <span class="prepend-prompt-counter"><span id="prepend-prompt-count">${manualText.length}</span> 字备注</span>
         </div>
 
         <textarea class="prepend-prompt-textarea" rows="6" readonly aria-label="当前生效的旅行偏好画像">${escapeHtml(promptText)}</textarea>
         <label for="prepend-prompt-editor">手动备注（单独保存）</label>
-        <textarea id="prepend-prompt-editor" class="prepend-prompt-textarea" rows="3" placeholder="只填写你的补充要求，例如酒店希望安静；自动偏好请在右侧记忆中编辑。">${escapeHtml(manualText)}</textarea>
+        <textarea id="prepend-prompt-editor" class="prepend-prompt-textarea" rows="3" placeholder="只填写你的补充要求，例如酒店希望安静；自动偏好请在旅行习惯列表中编辑。">${escapeHtml(manualText)}</textarea>
         ${state.profile?.manualPromptNeedsReview && legacyText ? `<details><summary>旧版提示词需要确认备注</summary><p>旧整稿混合了自动偏好与手动内容，已保留原文。请将仍需保留的手动要求复制到备注区保存；旧整稿不再自动参与规划。</p><pre>${escapeHtml(legacyText)}</pre></details>` : ''}
 
         <div class="prepend-prompt-footer">
           <div class="prepend-prompt-tip-text">
-            <span>💡 自动画像来自右侧记忆；手动备注独立保存，可留空清除。重新提炼会刷新自动画像并保留备注。</span>
+            <span>💡 自动画像来自旅行习惯列表；手动备注独立保存，可留空清除。重新提炼会刷新自动画像并保留备注。</span>
           </div>
           <div class="prepend-prompt-btn-group">
             <button type="button" class="ghost mini-btn" data-action="resynthesize-prepend-prompt" title="基于近期记忆刷新画像，保留手动备注">🔄 重新提炼</button>
@@ -102,8 +101,7 @@ function memoryProfilePanelHtml() {
     <section class="panel panel-pad memory-profile-panel">
       <div class="memory-profile-head">
         <div>
-          <span class="memory-kicker">LONG-TERM MEMORY (7-DAY STREAM)</span>
-          <div class="panel-title">我的旅行偏好 (按类整合 · 7天滚动流)</div>
+          <div class="panel-title">已记住的旅行习惯</div>
         </div>
         <button class="memory-switch ${memoryEnabled ? 'is-on' : ''}" data-action="toggle-travel-memory" aria-pressed="${memoryEnabled}" aria-label="${memoryEnabled ? '关闭长期旅行记忆' : '开启长期旅行记忆'}"><i></i>${memoryEnabled ? '已启用' : '未启用'}</button>
       </div>
@@ -113,7 +111,7 @@ function memoryProfilePanelHtml() {
         <span>智能感知：实时提取旅行偏好，互斥冲突项以最新记忆为准自动替换</span>
         <time>7天自动归档淘汰</time>
       </div>
-      <div class="memory-priority-line"><span>本次明确输入</span><b>›</b><span>左侧前置提示词画像</span><b>›</b><span>右侧近期记忆溯源</span></div>
+      <div class="memory-priority-line"><span>本次明确输入</span><b>›</b><span>偏好摘要</span><b>›</b><span>近期记忆来源</span></div>
       ${memoryCandidates.length ? `<div class="memory-candidate-list"><div class="candidate-list-header"><strong>待你确认的记忆建议</strong><span class="candidate-tip">确认后自动增量融入左侧前置提示词</span></div>${memoryCandidates.map((candidate) => `<article class="memory-candidate-item"><div class="candidate-item-main"><div class="candidate-tags"><span class="travel-memory-category">${escapeHtml(memoryCategoryLabel(candidate.category))}</span><span class="travel-memory-source-badge badge-pending">待确认候选</span></div><b>${escapeHtml(candidate.content)}</b><div class="travel-memory-origin-box"><span class="origin-label">💡 来源提示：</span><span class="origin-text">${candidate.sourceRef ? `历史对话提到“${escapeHtml(candidate.sourceRef)}”` : '由后台智能分析识别'} · 确认后自动增量融入左侧前置提示词。</span></div></div><div class="candidate-item-actions"><button class="ghost mini-btn" data-action="dismiss-profile-memory-candidate" data-id="${escapeHtml(candidate.id)}">忽略</button><button class="primary mini-btn" data-action="confirm-profile-memory-candidate" data-id="${escapeHtml(candidate.id)}">确认记住</button></div></article>`).join('')}</div>` : ''}
       <div class="travel-memory-list">
         ${groups.length ? visibleGroups.map(group => memoryGroupHtml(group, memoryCategoryLabel(group.category))).join('') : '<div class="notice">暂无近期记忆。聊天中说“我不吃辣”或“喜欢老茶馆”，悠悠会提炼并询问是否记住。</div>'}
@@ -166,9 +164,8 @@ export function profileView() {
     <main class="page shell">
       <div class="section-title">
         <div>
-          <div class="eyebrow">旅行者专属画像与资产</div>
-          <h2>旅行档案 · ${escapeHtml(state.user.name || '旅行者')}</h2>
-          <p>直观管理您的长期出行偏好、足迹资产与规划演化历程。</p>
+          <h1>旅行档案 · ${escapeHtml(state.user.name || '旅行者')}</h1>
+          <p>管理已记住的旅行习惯、补充特别要求，回看每次行程的变化。</p>
         </div>
         <button class="secondary" data-action="refresh-profile" ${state.profileLoading ? 'disabled' : ''}>${state.profileLoading ? '刷新中…' : '刷新档案'}</button>
       </div>
@@ -176,11 +173,11 @@ export function profileView() {
       ${profileStatsHtml({ trips, memories, history, memoryEnabled: state.profile.memoryEnabled === true })}
 
       <div class="profile-layout-grid">
-        ${prependPromptPanelHtml()}
         ${memoryProfilePanelHtml()}
+        ${prependPromptPanelHtml()}
 
-        <section class="panel panel-pad">
-          <div class="panel-title">行程版本演进与对比</div>
+        <details class="panel panel-pad profile-versions">
+          <summary>行程版本记录</summary>
           <p class="muted" style="font-size:12px;margin:4px 0 12px;">记录初始规划、局部重规划与微调的历史轨迹。</p>
           <div class="timeline-container">
             ${trips.length ? trips.map((trip) => `
@@ -198,7 +195,7 @@ export function profileView() {
               </div>
             `).join('') : '<div class="notice">暂无已保存行程版本。</div>'}
           </div>
-        </section>
+        </details>
       </div>
     </main>
   `;

@@ -55,8 +55,9 @@ export function renderMarkdownStatic(rawText) {
   text = text.replace(/(<\/blockquote>\s*)+<blockquote>/g, '<br />');
 
   // 6. Bold & Italic
-  text = text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+  text = text.replace(/\*\*((?:(?!\*\*)[^\n])+?)\*\*/g, '<strong>$1</strong>');
   text = text.replace(/__(.*?)__/g, '<strong>$1</strong>');
+  text = text.replace(/(<code\b[^>]*>[\s\S]*?<\/code>)|\*\*/g, (m, code) => code || '');
   text = text.replace(/\*([^\*\n]+)\*/g, '<em>$1</em>');
 
   // 7. Links

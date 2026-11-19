@@ -51,5 +51,5 @@ test('dining stop card (lunch/dinner) omits start time badge to prevent awkward 
   assert.ok(html.includes('⏳ 建议用餐 约 60 分钟'), 'Dining stop card MUST render dining duration');
   assert.ok(html.includes('🥢 必尝招牌：'), 'Dining stop card MUST render specialty dish');
   assert.ok(html.includes('毛血旺、歌乐山辣子鸡'), 'Dining stop card MUST display specialty dish name');
-  assert.ok(html.includes('选中此餐'), 'Dining stop card MUST render dining-specific action button');
+  assert.ok(html.includes('让悠悠调整此餐'), 'Dining stop card MUST render dining-specific action button');
 });

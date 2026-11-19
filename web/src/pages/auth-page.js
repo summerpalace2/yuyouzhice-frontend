@@ -6,21 +6,13 @@ export function authView() {
   return `
     <main class="page shell auth-page">
       <section class="auth-page-card">
-        <div class="auth-page-intro">
-          <span class="eyebrow">渝游智策 · 账号中心</span>
-          <h1>${registering ? '注册一个账号，保存你的重庆路线' : '欢迎回来，继续你的旅行规划'}</h1>
-          <p>${registering ? '账号密码登录是第一期唯一登录方式，注册后即可使用完整行程规划与局部微调。' : '登录后可以打开已保存的行程，继续聊天或对局部路线进行调整。'}</p>
-          <div class="auth-benefit-list">
-            <span>✓ 完整行程规划</span><span>✓ 局部微调与确认</span><span>✓ 行程管理与 PDF 导出</span>
-          </div>
-        </div>
         <div class="auth-form-card">
           <div class="auth-page-tabs">
             <button class="auth-page-tab ${!registering ? 'active' : ''}" data-action="set-auth-mode" data-mode="login">账号登录</button>
             <button class="auth-page-tab ${registering ? 'active' : ''}" data-action="set-auth-mode" data-mode="register">注册账号</button>
           </div>
-          <h2>${registering ? '创建你的账号' : '登录你的账号'}</h2>
-          <p class="auth-form-hint">${registering ? '只需邮箱、昵称和密码，注册后即可开始规划。' : '请使用注册时的邮箱和密码。'}</p>
+          <h1>${registering ? '创建你的账号' : '登录你的账号'}</h1>
+          <p class="auth-form-hint">${registering ? '使用邮箱和密码注册，昵称可选。' : '请使用注册时的邮箱和密码。'}</p>
           <form data-action="auth-form">
             <div class="form-row">
               <label for="login-email">邮箱地址</label>

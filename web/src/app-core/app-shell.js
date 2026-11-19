@@ -7,7 +7,7 @@ import { renderLoader } from '../shared/ui/loader.js';
 import { renderModals } from '../widgets/modals/modal-container.js';
 import { renderToast } from '../shared/ui/toast.js';
 import { floatingAdminReturnBtn } from '../features/admin-corpus/admin-service.js';
-import { floatingChatDock, floatingPlannerProposalDock } from '../features/trip-chat/chat-panel.js';
+import { floatingPlannerProposalDock } from '../features/trip-chat/chat-panel.js';
 import { scheduleTripMap, destroyTripMap, renderFullscreenMap } from '../widgets/trip-map/map-renderer.js';
 
 let fullscreenMapRenderTimer = null;
@@ -55,7 +55,13 @@ export function renderView() {
   mount.dataset.activeView = nextView;
   if (previousView !== nextView && restoreViewSnapshot(nextView, mount)) return;
   const viewFn = views[state.view] || homeView;
+  const previousWorkspace = previousView === nextView && nextView === 'planning' && mount.querySelector('.planning-workspace');
+  const sameSession = previousWorkspace && previousWorkspace.dataset.session === String(state.sessionId || '');
+  const itineraryTop = sameSession && previousWorkspace.querySelector('.workspace-grid')?.scrollTop;
+  const transcriptTop = sameSession && previousWorkspace.querySelector('.chat-transcript')?.scrollTop;
   mount.innerHTML = viewFn();
+  if (itineraryTop) mount.querySelector('.workspace-grid')?.scrollTo(0, itineraryTop);
+  if (transcriptTop) mount.querySelector('.chat-transcript')?.scrollTo(0, transcriptTop);
 
   if (state.view === 'planning' && state.trip) {
     if (state.mapFullscreen) {
@@ -72,10 +78,7 @@ export function renderFloatingBtn() {
   if (!mount) return;
   if (state.view !== 'planning') state.chatDockOpen = false;
   if (state.view !== 'planning' || !state.trip) state.plannerProposalDockOpen = false;
-  // 移动端聊天抽屉打开时，页面与聊天记录不能同时响应同一段滑动手势。
-  // 由 body 锁定外层滚动，滚动职责只交给 transcript，关闭后立即还原。
-  document.body.classList.toggle('chat-dock-open', Boolean(state.chatDockOpen && state.view === 'planning'));
-  mount.innerHTML = `${floatingAdminReturnBtn()}${floatingChatDock()}<div id="planner-proposal-dock-root" class="planner-proposal-dock-root">${floatingPlannerProposalDock()}</div>`;
+  mount.innerHTML = `${floatingAdminReturnBtn()}<div id="planner-proposal-dock-root" class="planner-proposal-dock-root">${floatingPlannerProposalDock()}</div>`;
 }
 
 /**

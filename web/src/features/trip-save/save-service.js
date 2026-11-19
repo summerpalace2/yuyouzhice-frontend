@@ -1,7 +1,7 @@
 import { state } from '../../app-core/state.js';
 import { deviceId, plannerIdempotencyKey, request } from '../../shared/api/client.js';
 import { toast } from '../../shared/ui/toast.js';
-import { saveUserPlan, clearUserPlan, saveUserChats, loadUserChats, loadUserPlan, getTripChatKey, loadChatWorkspaceMeta } from '../../app-core/user-store.js';
+import { saveUserPlan, clearUserPlan, saveUserChats, loadUserChats, loadUserPlan, getTripChatKey, loadChatWorkspaceMeta, normalizeChatMessages } from '../../app-core/user-store.js';
 import { persistTripWorkspace, persistOpenedTripWorkspace, adoptTripWorkspace } from '../trip-workspace/workspace-service.js';
 import { captureWorkspace, captureAuthentication } from '../../app-core/workspace-lifecycle.js';
 import { invalidatePageCache, isPageDataFresh, markPageDataFresh } from '../../app-core/page-cache.js';
@@ -161,7 +161,9 @@ export async function openSavedTrip(id, { renderLoader, render, scheduleTripMap,
     const recoverLocal = localMeta?.dirty && !localMeta.blocked && workspace.chatEpoch
       && localMeta.chatEpoch === workspace.chatEpoch
       && Number(localMeta.workspaceRevision) === Number(workspace.workspaceRevision);
-    const chatMessages = recoverLocal ? localMessages : remoteMessages;
+    const chatMessages = normalizeChatMessages(recoverLocal ? localMessages : remoteMessages, {
+      plannerSessionId: data.sessionId, version: data.trip?.version
+    });
     const chatMode = workspace.chatMode === 'planner'
       ? 'planner'
       : (workspace.chatMode === 'chat' ? 'chat' : 'agent');

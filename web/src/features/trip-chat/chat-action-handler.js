@@ -1,3 +1,4 @@
+import { switchPlanningPane } from './workspace-layout.js';
 import { resetConversationContext } from './chat-service.js';
 import { executeAgentConfirmDecision } from './agent-service.js';
 import { getGuestChatSessionId, getChatMemorySessionId } from '../../app-core/user-store.js';
@@ -85,7 +86,7 @@ export async function handleChatAction({
         if (button) {
           button.classList.toggle('active-btn', isSelected);
           const isDining = element.classList.contains('dining-stop-card') || button.dataset.isDining === 'true';
-          button.textContent = isSelected ? '取消选中' : (isDining ? '选中此餐' : '选中此站');
+          button.textContent = isSelected ? '取消选中' : (isDining ? '让悠悠调整此餐' : '让悠悠调整');
         }
         const statusContainer = element.querySelector('.stop-header-status');
         if (statusContainer) {
@@ -107,6 +108,8 @@ export async function handleChatAction({
     renderChatInDOM({ scrollToBottom: false }, renderView);
 
     if (state.selectedStopId) {
+      switchPlanningPane(state, 'assistant', { focusInput: true });
+      renderFloatingBtn?.();
       toast(state.chatMode === 'agent'
         ? `已选中【${targetStopName || '当前站点'}】，可让智能体直接预演替换、算路或固定站点。`
         : (state.chatMode === 'planner'
@@ -130,7 +133,7 @@ export async function handleChatAction({
     const keepAgent = state.chatMode === 'agent';
     const switchedMode = !keepAgent && state.chatMode !== 'planner';
     if (!keepAgent) state.chatMode = 'planner';
-    state.chatDockOpen = true;
+    switchPlanningPane(state, 'assistant');
     persistChatMode(state, saveUserPlan, persistTripWorkspace);
     if (typeof document !== 'undefined') {
       document.querySelectorAll('.stop').forEach((element) => {
@@ -140,7 +143,7 @@ export async function handleChatAction({
         if (button) {
           button.classList.toggle('active-btn', selected);
           const isDining = element.classList.contains('dining-stop-card');
-          button.textContent = selected ? '取消选中' : (isDining ? '选中此餐' : '选中此站');
+          button.textContent = selected ? '取消选中' : (isDining ? '让悠悠调整此餐' : '让悠悠调整');
         }
         const statusContainer = element.querySelector('.stop-header-status');
         if (statusContainer) {
@@ -177,7 +180,7 @@ export async function handleChatAction({
           button.classList.remove('active-btn');
           button.dataset.action = 'select-stop';
           const isDining = element.classList.contains('dining-stop-card');
-          button.textContent = isDining ? '选中此餐' : '选中此站';
+          button.textContent = isDining ? '让悠悠调整此餐' : '让悠悠调整';
         }
         element.querySelector('.chip-selected')?.remove();
       });
@@ -287,13 +290,11 @@ export async function handleChatAction({
     await sendChatMessage({ inputOverride: prompt, preserveInput: true, renderView, scheduleTripMap });
     return true;
   }
-  if (action === 'open-chat-dock' || action === 'close-chat-dock') {
-    state.chatDockOpen = action === 'open-chat-dock';
-    if (state.view === 'planning') {
-      renderView?.();
-    }
-    renderFloatingBtn();
-    if (state.chatDockOpen) window.setTimeout(() => document.querySelector('#chat-input')?.focus(), 0);
+  if (['open-chat-dock', 'close-chat-dock', 'expand-assistant', 'view-updated-itinerary'].includes(action)) {
+    const mode = { 'expand-assistant': 'expanded', 'open-chat-dock': 'assistant',
+      'close-chat-dock': 'itinerary', 'view-updated-itinerary': 'locate' }[action];
+    switchPlanningPane(state, mode, { stopId: target?.dataset?.id, day: target?.dataset?.day });
+    renderFloatingBtn?.();
     return true;
   }
   if (action === 'dismiss-planner-proposal') {
@@ -375,9 +376,12 @@ export async function handleChatAction({
       }
     }
     const prompt = String(target.dataset.prompt || '');
+    const retryIndex = Number(target.dataset.messageIndex);
+    const retryOperation = action === 'retry-chat' && Number.isInteger(retryIndex)
+      ? state.chatMessages[retryIndex]?.agentOperation : undefined;
     if (action === 'retry-chat') state.chatInput = prompt;
     try {
-      await sendChatMessage({ inputOverride: prompt, preserveInput: action === 'quick-ai-action', renderView, scheduleTripMap });
+      await sendChatMessage({ inputOverride: prompt, preserveInput: action === 'quick-ai-action', retryOperation, renderView, scheduleTripMap });
     } finally {
       target.classList.remove('is-active-loading');
     }

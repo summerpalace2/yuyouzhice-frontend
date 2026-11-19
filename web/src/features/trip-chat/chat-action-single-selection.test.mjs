@@ -62,7 +62,7 @@ test('only one attraction can be selected; selecting another automatically desel
   assert.doesNotMatch(banner1, /已选 \d+ 个/);
 
   const actions1 = selectedStopActionHtml();
-  assert.match(actions1, /当前选择：<b>磁器口古镇<\/b>/);
+  assert.match(actions1, /第 1 天 · 磁器口古镇<\/strong>/);
   assert.match(actions1, /请推荐【磁器口古镇】的同片区可替换景点/);
   assert.doesNotMatch(actions1, /白公馆/);
 
@@ -85,7 +85,7 @@ test('only one attraction can be selected; selecting another automatically desel
   assert.doesNotMatch(banner2, /已选 \d+ 个/);
 
   const actions2 = selectedStopActionHtml();
-  assert.match(actions2, /当前选择：<b>白公馆<\/b>/);
+  assert.match(actions2, /第 1 天 · 白公馆<\/strong>/);
   assert.match(actions2, /请推荐【白公馆】的同片区可替换景点/);
   assert.doesNotMatch(actions2, /磁器口古镇/);
 

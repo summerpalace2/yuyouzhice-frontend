@@ -18,6 +18,7 @@ import { bootstrapApplication } from './src/app-core/bootstrap.js';
 import { handleNavigationAction } from './src/app-core/navigation-handler.js';
 import { handleAdminAction } from './src/features/admin-corpus/admin-action-handler.js';
 import { handleProfileAction } from './src/features/trip-memory/profile-action-handler.js';
+import { observePlanningViewport, switchPlanningPane } from './src/features/trip-chat/workspace-layout.js';
 import { handleChatAction } from './src/features/trip-chat/chat-action-handler.js';
 
 // 2. 通用安全与工具函数
@@ -363,7 +364,7 @@ const ACTION_OWNER = new Map([
     'open-planner-proposal', 'close-planner-proposal', 'switch-chat-mode',
     'switch-adjustment-mode', 'switch-agent-mode', 'agent-confirm-approve',
     'agent-confirm-cancel', 'request-other-proposals', 'open-chat-dock',
-    'close-chat-dock', 'dismiss-planner-proposal', 'reset-chat',
+    'close-chat-dock', 'expand-assistant', 'view-updated-itinerary', 'dismiss-planner-proposal', 'reset-chat',
     'unpin-and-retry', 'cancel-chat', 'retry-chat', 'quick-ai-action',
     'quick-same-district-replace', 'execute-action-chip',
     'acknowledge-chat-mode-guide', 'show-chat-mode-guide'
@@ -710,8 +711,8 @@ if (eventRoot) {
       renderPlannerProposalDockInDOM();
       return;
     }
-    if (event.key === 'Escape' && state.chatDockOpen) {
-      state.chatDockOpen = false;
+    if (event.key === 'Escape' && state.view === 'planning' && state.trip && state.chatDockOpen) {
+      switchPlanningPane(state, 'itinerary');
       renderFloatingBtn();
       return;
     }
@@ -1389,4 +1390,4 @@ void bootstrapApplication({
   loadAdminHealth: doHealth,
   prefetchPlannerContext,
   state
-});
+}).then(observePlanningViewport);

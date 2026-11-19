@@ -1,11 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { executeAgentConfirmDecision, readAgentStream } from './agent-service.js';
 import { state, normalizeChatMode } from '../../app-core/state.js';
 import { sendChatMessage } from './chat-service.js';
-import { chatMessageHtml, chatModeTabsHtml, selectedStopActionHtml, floatingChatDock, floatingPlannerProposalDock } from './chat-panel.js';
+import { chatMessageHtml, chatModeTabsHtml, selectedStopActionHtml, floatingPlannerProposalDock } from './chat-panel.js';
 import { stopCard } from '../../entities/trip/stop-card.js';
 import { planView } from '../../pages/plan-page.js';
 import { handleChatAction } from './chat-action-handler.js';
+import { saveUserChats, loadUserChats } from '../../app-core/user-store.js';
+import { beginTripMutation, finishTripMutation } from '../../entities/trip/trip-mutation.js';
+import { renderMarkdownStatic } from '../../shared/lib/markdown.js';
 
 function sseBody(chunks) {
   const encoder = new TextEncoder();
@@ -140,7 +144,7 @@ test('HIL 确认执行更新行程与拒绝取消均带防重放与工作区隔�
           modified: true,
           tool: 'confirm_apply_trip_adjustment',
           message: '行程调整已应用至 v4',
-          data: { applied: true, currentVersion: 4, trip: { version: 4, city: '重庆', days: [{ day: 1 }] } }
+          data: { applied: true, sessionId: 'ps-1', currentVersion: 4, trip: { version: 4, city: '重庆', days: [{ day: 1 }] } }
         })
       };
     }
@@ -225,7 +229,7 @@ test('create_trip_plan 新建行程实时采纳与 pin/save HIL 确认同步及�
           modified: true,
           tool: 'confirm_save_formal_trip',
           message: '正式行程已保存',
-          data: { saved: true, tripId: 'formal-888', currentVersion: 1 }
+          data: { saved: true, sessionId: 'ps-created-7', tripId: 'formal-888', currentVersion: 1 }
         })
       };
     }
@@ -310,6 +314,307 @@ test('create_trip_plan 新建行程实时采纳与 pin/save HIL 确认同步及�
   assert.match(pageHtml, /✓ 高德实景/);
   assert.match(pageHtml, /🧘 弹性休闲/);
   assert.equal(floatingPlannerProposalDock(), '');
-  assert.equal(floatingChatDock(), '');
+  assert.equal((pageHtml.match(/id="chat-input"/g) || []).length, 1);
+  assert.doesNotMatch(pageHtml, /chat-dock-trigger/);
   assert.match(stopCard(state.trip.days[0].stops[0], 1, 1), /免费免预约/);
+});
+
+for (const reason of ['wrong-workspace', 'expired', 'old-preview']) {
+  test(`confirmation rejects ${reason} before sending a write`, async t => {
+    setupEnv(t, async () => assert.fail('must not send stale approval'));
+    const card = { confirmId: 'c', status: 'pending', toolName: 'confirm_apply_trip_adjustment',
+      plannerSessionId: reason === 'wrong-workspace' ? 'other' : state.sessionId,
+      expiresAtMillis: reason === 'expired' ? Date.now() - 1 : Date.now() + 60000,
+      args: { baseRevision: reason === 'old-preview' ? 2 : 3 } };
+    state.chatMessages = [{ confirmRequest: card }];
+    await executeAgentConfirmDecision({ confirmId: 'c', approved: true });
+    assert.equal(card.status, 'expired');
+    assert.equal(state.trip.version, 3);
+  });
+}
+
+test('confirmation cannot overwrite a draft mutated in-place while waiting', async t => {
+  setupEnv(t, async () => {});
+  const card = { confirmId: 'c', status: 'pending' };
+  state.chatMessages = [{ confirmRequest: card }];
+  await executeAgentConfirmDecision({ confirmId: 'c', approved: true, request: async () => {
+    state.trip.version = 5;
+    return { ok: true, data: { applied: true, sessionId: 'ps-1', currentVersion: 4, trip: { version: 4 } } };
+  } });
+  assert.equal(state.trip.version, 5);
+  assert.equal(card.status, 'expired');
+});
+
+test('SSE releases the reader when rendering a streamed event throws', async t => {
+  let cancelled = false;
+  const stream = new ReadableStream({ start(ctrl) {
+    ctrl.enqueue(new TextEncoder().encode('event: message\ndata: {}\n\n'));
+  }, cancel() { cancelled = true; } });
+  setupEnv(t, async () => ({ ok: true, body: stream }));
+  await assert.rejects(readAgentStream({}, () => { throw new Error('render failed'); }), /render failed/);
+  assert.equal(cancelled, true);
+  assert.equal(stream.locked, false);
+});
+
+test('confirmation card displays escaped authoritative old and new values', t => {
+  setupEnv(t, async () => {});
+  const html = chatMessageHtml({ role: 'assistant', content: '', confirmRequest: {
+    confirmId: 'c', status: 'pending', args: { stopChanges: [{ action: 'UPDATED', stopName: '<script>x</script>',
+      fields: { time: { before: '09:00', after: '11:00' } } }] }
+  } });
+  assert.match(html, /原安排<\/small>09:00[\s\S]*建议安排<\/small>11:00/);
+  assert.doesNotMatch(html, /<script>x/);
+});
+
+test('lost approval response followed by cancel still displays the original approved receipt', async t => {
+  setupEnv(t, async () => {});
+  const card = { confirmId: 'c', status: 'pending' };
+  state.chatMessages = [{ confirmRequest: card }];
+  await executeAgentConfirmDecision({ confirmId: 'c', approved: false, request: async () => ({
+    ok: true, approved: true, modified: true, data: { applied: true, sessionId: 'ps-1', currentVersion: 4, trip: { version: 4, days: [] } }
+  }) });
+  assert.equal(card.status, 'approved');
+  assert.equal(state.trip.version, 4);
+});
+
+
+test('失败重发复用动作 ID 和完整请求快照，主动新发同一句话则产生新动作', async (t) => {
+  const payloads = [];
+  setupEnv(t, async (path, opts) => {
+    if (path !== '/api/agent/stream') return { ok: true, json: async () => ({}) };
+    payloads.push(JSON.parse(opts.body));
+    if (payloads.length === 1) {
+      const saved = loadUserChats('u-alice')[state.chatSessionId].at(-1);
+      assert.deepEqual(saved.agentOperation.payload, payloads[0]);
+      assert.equal(saved.pending, false);
+      assert.ok(saved.error);
+      throw new Error('connection lost');
+    }
+    return { ok: true, body: sseBody(['event: done\ndata: {}\n\n']) };
+  });
+  state.chatMode = 'agent';
+  await sendChatMessage({ inputOverride: '创建重庆一日游' });
+  const failed = state.chatMessages.at(-1);
+  assert.ok(failed.error);
+  assert.match(payloads[0].operationId, /^[A-Za-z0-9_-]{1,128}$/);
+  assert.match(chatMessageHtml(failed, 1), /data-message-index="1"/);
+  state.activeDay = 7; // 选中的天数变化不应偷偷重写重试请求。
+  await handleChatAction({ action: 'retry-chat', target: { dataset: { messageIndex: '1', prompt: '创建重庆一日游' }, classList: { add() {}, remove() {} } }, state, sendChatMessage });
+  // 若动作名未匹配，明确失败，防止仅测试内部帮助函数。
+  assert.equal(payloads.length, 2);
+  assert.deepEqual(payloads[1], payloads[0]);
+  await sendChatMessage({ inputOverride: '创建重庆一日游' });
+  assert.equal(payloads.length, 3);
+  assert.notEqual(payloads[2].operationId, payloads[0].operationId);
+});
+
+test('行程版本变化后拒绝旧动作重试，不发送新请求也不追加消息', async (t) => {
+  let calls = 0;
+  setupEnv(t, async () => { calls++; throw new Error('offline'); });
+  state.chatMode = 'agent';
+  await sendChatMessage({ inputOverride: '换成博物馆' });
+  const operation = state.chatMessages.at(-1).agentOperation;
+  const beforeCalls = calls, beforeMessages = state.chatMessages.length;
+  state.trip.version++;
+  await sendChatMessage({ inputOverride: '换成博物馆', retryOperation: operation });
+  assert.equal(calls, beforeCalls);
+  assert.equal(state.chatMessages.length, beforeMessages);
+});
+
+test('同一网络块 done 后的事件不会再执行', async (t) => {
+  setupEnv(t, async () => ({ ok: true, body: sseBody([
+    'event: done\ndata: {}\n\nevent: tool_result\ndata: {"danger":"late"}\n\n'
+  ]) }));
+  const seen = [];
+  await readAgentStream({}, name => seen.push(name));
+  assert.deepEqual(seen, ['done']);
+});
+
+function pendingConfirmation() {
+  const card = { confirmId: 'cfg-scope', toolName: 'confirm_apply_trip_adjustment', status: 'pending',
+    loading: false, plannerSessionId: state.sessionId, memorySessionId: 'original-chat', args: { baseRevision: 3 } };
+  state.chatMessages = [{ role: 'assistant', content: '确认', confirmRequest: card }];
+  return card;
+}
+
+for (const authorizedAlias of [false, true]) {
+  test(`确认回执跨 Java 会话时${authorizedAlias ? '仅接受 BFF 授权映射' : '拒绝覆盖当前行程'}`, async (t) => {
+    setupEnv(t, async () => { throw new Error('use injected request'); });
+    const card = pendingConfirmation();
+    let body;
+    await executeAgentConfirmDecision({ confirmId: card.confirmId, approved: true, messageIndex: 0,
+      memorySessionId: 'wrong-new-chat', request: async (_, opts) => {
+        body = JSON.parse(opts.body);
+        return { ok: true, modified: true, ...(authorizedAlias ? { workspaceSessionId: 'ps-1' } : {}),
+          data: { applied: true, sessionId: 'java-other', currentVersion: 4, trip: { version: 4, days: [] } } };
+      }
+    });
+    assert.equal(body.sessionId, 'original-chat');
+    assert.equal(state.trip.version, authorizedAlias ? 4 : 3);
+    assert.equal(card.status, authorizedAlias ? 'approved' : 'pending');
+    assert.equal(card.loading, false);
+    assert.equal(state.tripMutationTicket, null);
+    if (!authorizedAlias) assert.match(card.error, /不属于当前行程/);
+  });
+}
+
+test('确认执行与直接编辑共享写锁，忙时不提交确认请求', async (t) => {
+  setupEnv(t, async () => { assert.fail('cannot submit while direct mutation owns lock'); });
+  const card = pendingConfirmation();
+  const ticket = beginTripMutation('direct');
+  assert.ok(ticket);
+  try {
+    await executeAgentConfirmDecision({ confirmId: card.confirmId, approved: true, messageIndex: 0 });
+    assert.equal(state.tripMutationTicket, ticket);
+    assert.equal(card.loading, false);
+    assert.equal(card.status, 'pending');
+  } finally { finishTripMutation(ticket); }
+});
+
+test('切换工作区后旧确认返回会释放旧卡状态，但不会覆盖新行程或清除新锁', async (t) => {
+  setupEnv(t, async () => { throw new Error('use injected request'); });
+  const card = pendingConfirmation();
+  let resolve;
+  const waiting = new Promise(r => { resolve = r; });
+  const work = executeAgentConfirmDecision({ confirmId: card.confirmId, approved: true, messageIndex: 0, request: () => waiting });
+  assert.equal(card.loading, true);
+  state.sessionId = 'ps-new'; state.savedTripId = 'trip-new'; state.trip = { version: 10, days: [] };
+  state.chatMessages = [];
+  const newTicket = beginTripMutation('direct');
+  state.loading = true;
+  resolve({ ok: true, data: { applied: true, sessionId: 'ps-1', currentVersion: 4, trip: { version: 4 } } });
+  await work;
+  assert.equal(card.loading, false);
+  assert.equal(card.status, 'pending');
+  assert.equal(state.trip.version, 10);
+  assert.equal(state.tripMutationTicket, newTicket);
+  assert.equal(state.loading, true);
+  finishTripMutation(newTicket);
+});
+
+test('旧流的 finally 不会清除另一个工作区的聊天 loading', async (t) => {
+  let resolve;
+  setupEnv(t, () => new Promise(r => { resolve = r; }));
+  state.chatMode = 'agent';
+  const work = sendChatMessage({ inputOverride: '介绍下附近景点' });
+  const oldAssistant = state.chatMessages.at(-1);
+  state.sessionId = 'ps-new'; state.savedTripId = 'trip-new';
+  state.chatMessages = [{ role: 'assistant', content: '', pending: true }];
+  state.chatLoading = true;
+  resolve({ ok: true, body: sseBody(['event: message\ndata: {"message":"旧回复"}\n\nevent: done\ndata: {}\n\n']) });
+  await work;
+  assert.equal(state.chatLoading, true);
+  assert.equal(state.chatMessages[0].content, '');
+  assert.equal(oldAssistant.pending, false);
+});
+
+test('恢复聊天记录清除瞬时执行状态，保留原确认单和重试身份，不改变实时消息对象', t => {
+  setupEnv(t, async () => {});
+  const live = { role: 'assistant', pending: true, content: '等待确认',
+    confirmRequest: { confirmId: 'cfg-recover', loading: true, status: 'pending' },
+    agentOperation: { operationId: 'action-recover', payload: { message: '修改' } } };
+  saveUserChats('u-alice', { history: [live] });
+  const restored = loadUserChats('u-alice').history[0];
+  assert.equal(restored.pending, false);
+  assert.equal(restored.confirmRequest.loading, false);
+  assert.equal(restored.confirmRequest.confirmId, 'cfg-recover');
+  assert.equal(restored.confirmRequest.status, 'pending');
+  assert.deepEqual(restored.agentOperation, live.agentOperation);
+  assert.equal(live.pending, true);
+  assert.equal(live.confirmRequest.loading, true);
+});
+
+
+test('新建草稿回执的版本不一致时保留旧工作区', async t => {
+  setupEnv(t, async () => ({ ok: true, body: sseBody([
+    'event: tool_result\ndata: {"toolName":"create_trip_plan","data":{"ok":true,"plannerSessionId":"new-draft","currentVersion":2,"createdTrip":{"version":1,"days":[]}}}\n\nevent: done\ndata: {}\n\n'
+  ]) }));
+  state.chatMode = 'agent';
+  const trip = state.trip;
+  await sendChatMessage({ inputOverride: '重新创建行程' });
+  assert.equal(state.trip, trip);
+  assert.equal(state.sessionId, 'ps-1');
+  assert.match(state.chatMessages.at(-1).error, /版本不一致/);
+  assert.equal(state.chatLoading, false);
+});
+
+
+test('确认执行入口拒绝字符串布尔值，防止 false 文本被强制转换成批准', async t => {
+  setupEnv(t, async () => { assert.fail('非法批准类型不能发起请求'); });
+  const card = pendingConfirmation();
+  const result = await executeAgentConfirmDecision({ confirmId: card.confirmId, approved: 'false', messageIndex: 0 });
+  assert.equal(result, false);
+  assert.equal(card.status, 'pending');
+  assert.equal(card.loading, false);
+});
+
+test('并发双击确认按钮只发送一次 /api/agent/confirm 请求', async t => {
+  let hits = 0;
+  let release;
+  setupEnv(t, async () => { assert.fail('use injected request'); });
+  const card = pendingConfirmation();
+  const req = () => {
+    hits += 1;
+    return new Promise((resolve) => {
+      release = () => resolve({ ok: true, approved: true, modified: true, data: { applied: true, sessionId: 'ps-1', currentVersion: 4, trip: { version: 4, days: [] } } });
+    });
+  };
+  const first = executeAgentConfirmDecision({ confirmId: card.confirmId, approved: true, messageIndex: 0, request: req });
+  const second = executeAgentConfirmDecision({ confirmId: card.confirmId, approved: true, messageIndex: 0, request: req });
+  release();
+  await Promise.all([first, second]);
+  assert.equal(hits, 1);
+  assert.equal(card.status, 'approved');
+});
+
+test('Markdown 渲染自动清理未配对的粗体星号但保留代码块内容', () => {
+  const html = renderMarkdownStatic('### **Day 1 调整建议\n- **湖广会馆：替代十八梯**\n- 正常**加粗**示例\n`const pow = "a**b";`');
+  assert.doesNotMatch(html, /\*\*Day/);
+  assert.doesNotMatch(html, /\*\*湖广会馆/);
+  assert.match(html, /<strong>加粗<\/strong>/);
+  assert.match(html, /<code class="inline-code">const pow = &quot;a\*\*b&quot;;<\/code>/);
+});
+
+test('景点类检索胶囊展示「景点候选检索」而非「POI/餐饮检索」', (t) => {
+  setupEnv(t, async () => {});
+  const html = chatMessageHtml({
+    role: 'assistant',
+    content: '已为您找到替代景点。',
+    toolResults: [
+      { step: 1, toolName: 'search_poi_and_dining', toolLabel: '景点候选检索', category: 'SCENIC', ok: true, summary: '检索到 5 条重庆景点候选' }
+    ]
+  }, 0);
+  assert.match(html, /景点候选检索/);
+  assert.doesNotMatch(html, /POI\/餐饮检索/);
+});
+
+test('流式事件中断（已收到步骤但未收到 done）自动重试一次并完成', async (t) => {
+  let streamCalls = 0;
+  setupEnv(t, async (path) => {
+    if (path !== '/api/agent/stream') return { ok: true, json: async () => ({}) };
+    streamCalls += 1;
+    if (streamCalls === 1) {
+      return {
+        ok: true,
+        status: 200,
+        body: sseBody([
+          'event: agent_step\ndata: {"event":"agent_step","step":1,"phase":"reasoning","message":"正在检索景点"}\n\n'
+        ])
+      };
+    }
+    return {
+      ok: true,
+      status: 200,
+      body: sseBody([
+        'event: message\ndata: {"event":"message","step":0,"message":"自动重试后已为您补充推荐。"}\n\n',
+        'event: done\ndata: {"event":"done","step":0,"message":"complete"}\n\n'
+      ])
+    };
+  });
+  state.chatMode = 'agent';
+  await sendChatMessage({ inputOverride: '把十八梯换成其他景点' });
+  const last = state.chatMessages.at(-1);
+  assert.equal(streamCalls, 2);
+  assert.ok(!last.error);
+  assert.match(last.content, /自动重试后已为您补充推荐/);
 });
